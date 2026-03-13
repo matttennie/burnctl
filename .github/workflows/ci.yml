@@ -58,8 +58,11 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install vermin
-        run: pip install vermin
+      - name: Install lint tools
+        run: pip install vermin mypy
 
       - name: Check minimum Python version
         run: vermin --target=3.8- --backport argparse burnctl/ tests/
+
+      - name: Type check with mypy
+        run: mypy burnctl/

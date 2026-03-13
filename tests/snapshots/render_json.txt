@@ -1,0 +1,99 @@
+{
+  "agents": [
+    {
+      "id": "claude",
+      "name": "Claude Code",
+      "plan_name": "max5x",
+      "plan_price": 100,
+      "interval": "mo",
+      "period_start": "2026-03-10",
+      "period_end": "2026-04-10",
+      "days_elapsed": 3,
+      "days_remaining": 28,
+      "total_days": 31,
+      "pace_pct": 4.6,
+      "projected_cost": 47.53,
+      "messages": 1931,
+      "sessions": 5,
+      "output_tokens": 185081,
+      "tool_calls": 461,
+      "period_cost": 4.63,
+      "alltime_cost": 844.12,
+      "value_ratio": 4.2,
+      "model_usage": {
+        "claude-opus-4-5": {
+          "inputTokens": 500000,
+          "outputTokens": 473958
+        },
+        "claude-opus-4-6": {
+          "inputTokens": 1200000,
+          "outputTokens": 1034712
+        }
+      },
+      "daily_messages": {
+        "2026-03-11": 965,
+        "2026-03-12": 966
+      },
+      "spark_data": [
+        0,
+        965,
+        966,
+        0
+      ],
+      "first_session": "2026-01-10",
+      "total_messages": 29328,
+      "total_sessions": 95
+    },
+    {
+      "id": "gemini",
+      "name": "Gemini CLI",
+      "plan_name": "pay-as-you-go",
+      "plan_price": 0,
+      "interval": "mo",
+      "period_start": "2026-03-01",
+      "period_end": "2026-04-01",
+      "days_elapsed": 12,
+      "days_remaining": 19,
+      "total_days": 31,
+      "pace_pct": 0,
+      "projected_cost": 0,
+      "messages": 57,
+      "sessions": 18,
+      "output_tokens": 45000,
+      "tool_calls": 379,
+      "period_cost": 4.1,
+      "alltime_cost": 4.1,
+      "value_ratio": 0,
+      "model_usage": {
+        "gemini-2.5-flash": {
+          "inputTokens": 100000,
+          "outputTokens": 45000
+        }
+      },
+      "daily_messages": {
+        "2026-03-11": 10,
+        "2026-03-12": 8
+      },
+      "spark_data": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        10,
+        8,
+        0
+      ],
+      "first_session": "2026-02-12",
+      "total_messages": 57,
+      "total_sessions": 18
+    }
+  ],
+  "total_period_cost": 8.73,
+  "today": "2026-03-13"
+}

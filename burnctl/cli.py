@@ -182,6 +182,12 @@ def _merge_config(args, config):
     if args.interval:
         config["billing_interval"] = args.interval
     if args.billing_day is not None:
+        if not 1 <= args.billing_day <= 31:
+            print(
+                "Error: --billing-day must be between 1 and 31.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
         config["billing_day"] = args.billing_day
     if args.theme:
         config["theme"] = args.theme

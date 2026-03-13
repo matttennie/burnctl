@@ -12,12 +12,43 @@ authors = [{name = "Matthew Tennie", email = "theaiorchard@gmail.com"}]
 requires-python = ">=3.8"
 dependencies = []
 
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Quality Assurance",
+    "Topic :: Utilities",
+]
+
 [project.optional-dependencies]
 claude = ["claude-usage>=0.1.0"]
 keywords = ["ai", "usage", "dashboard", "cli", "claude", "gemini", "codex"]
+
+[project.urls]
+Homepage = "https://github.com/matttennie/burnctl"
+Repository = "https://github.com/matttennie/burnctl"
+Issues = "https://github.com/matttennie/burnctl/issues"
+Changelog = "https://github.com/matttennie/burnctl/blob/main/CHANGELOG.md"
 
 [tool.setuptools.packages.find]
 include = ["burnctl*"]
 
 [project.scripts]
 burnctl = "burnctl.cli:main"
+
+[tool.mypy]
+python_version = "3.9"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = false
+check_untyped_defs = true
+ignore_missing_imports = true

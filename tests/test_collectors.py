@@ -7,7 +7,9 @@ import pytest
 
 from burnctl.collectors import ALL_COLLECTORS, get_collector, get_available
 from burnctl.collectors.base import BaseCollector
-from burnctl.collectors.aider import AiderCollector, _expand_suffix, _COST_RE
+from burnctl.collectors.aider import (
+    AiderCollector, _expand_suffix, _COST_RE, _find_history_files,
+)
 from burnctl.collectors.local import LocalCollector
 from burnctl.collectors.stubs import ClineCollector, OpenCodeCollector, DebGPTCollector
 
@@ -177,6 +179,165 @@ class TestAiderCollector:
 
     def test_upgrade_url(self):
         assert AiderCollector().get_upgrade_url() == "https://aider.chat/"
+
+
+# ── Aider _find_history_files ────────────────────────────────────
+
+
+class TestAiderFindHistoryFiles:
+    """Cover lines 53, 63-65 of aider.py: directory walking with depth limit."""
+
+    def test_finds_file_in_home_root(self, tmp_path):
+        """Line 53: history file found directly in a search root."""
+        # Create .aider.chat.history.md at the root of "home"
+        hist = tmp_path / ".aider.chat.history.md"
+        hist.write_text("cost line\n")
+
+        with patch(
+            "burnctl.collectors.aider.os.path.expanduser",
+            return_value=str(tmp_path),
+        ):
+            result = _find_history_files()
+
+        assert any(str(hist) in r for r in result)
+
+    def test_finds_files_in_subdirectory_walk(self, tmp_path):
+        """Lines 63-65: walk up to depth 2 under search roots."""
+        # Create Desktop/project/.aider.chat.history.md
+        desktop = tmp_path / "Desktop"
+        project = desktop / "project"
+        project.mkdir(parents=True)
+        hist = project / ".aider.chat.history.md"
+        hist.write_text("cost line\n")
+
+        with patch(
+            "burnctl.collectors.aider.os.path.expanduser",
+            return_value=str(tmp_path),
+        ):
+            result = _find_history_files()
+
+        assert str(hist) in result
+
+    def test_depth_limit_skips_deep_files(self, tmp_path):
+        """Walk should stop at depth 2, so depth-3 files are not found."""
+        desktop = tmp_path / "Desktop"
+        deep = desktop / "a" / "b" / "c"
+        deep.mkdir(parents=True)
+        hist = deep / ".aider.chat.history.md"
+        hist.write_text("cost line\n")
+
+        with patch(
+            "burnctl.collectors.aider.os.path.expanduser",
+            return_value=str(tmp_path),
+        ):
+            result = _find_history_files()
+
+        assert str(hist) not in result
+
+    def test_deduplicates_files(self, tmp_path):
+        """Line 64: files found at root should not be re-added by walk."""
+        # Create Desktop/.aider.chat.history.md -- found by root check AND walk
+        desktop = tmp_path / "Desktop"
+        desktop.mkdir()
+        hist = desktop / ".aider.chat.history.md"
+        hist.write_text("cost line\n")
+
+        with patch(
+            "burnctl.collectors.aider.os.path.expanduser",
+            return_value=str(tmp_path),
+        ):
+            result = _find_history_files()
+
+        # The file should appear exactly once
+        assert result.count(str(hist)) == 1
+
+
+# ── Aider get_stats error paths ──────────────────────────────────
+
+
+class TestAiderGetStatsErrorPaths:
+    """Cover lines 110-111, 115, 120-121, 134 in aider.py get_stats."""
+
+    def test_getmtime_oserror_skips_file(self, tmp_path):
+        """Lines 110-111: OSError on getmtime -> continue."""
+        hist = tmp_path / ".aider.chat.history.md"
+        hist.write_text("Tokens: 1k sent, 1k received. Cost: $0.05\n")
+
+        with patch(
+            "burnctl.collectors.aider._find_history_files",
+            return_value=[str(hist)],
+        ), patch(
+            "burnctl.collectors.aider.os.path.getmtime",
+            side_effect=OSError("permission denied"),
+        ):
+            collector = AiderCollector()
+            stats = collector.get_stats(
+                datetime(2020, 1, 1), datetime(2030, 1, 1), datetime.now(),
+            )
+
+        # File skipped -> no matches -> returns None
+        assert stats is None
+
+    def test_old_mtime_skips_file(self, tmp_path):
+        """Line 115: mtime < start_ts -> skip file."""
+        hist = tmp_path / ".aider.chat.history.md"
+        hist.write_text("Tokens: 1k sent, 1k received. Cost: $0.05\n")
+
+        # Set mtime to 2019 (before the billing period start of 2025)
+        old_ts = datetime(2019, 1, 1).timestamp()
+
+        with patch(
+            "burnctl.collectors.aider._find_history_files",
+            return_value=[str(hist)],
+        ), patch(
+            "burnctl.collectors.aider.os.path.getmtime",
+            return_value=old_ts,
+        ):
+            collector = AiderCollector()
+            start = datetime(2025, 1, 1)
+            stats = collector.get_stats(
+                start, datetime(2025, 2, 1), datetime(2025, 1, 15),
+            )
+
+        assert stats is None
+
+    def test_open_oserror_skips_file(self, tmp_path):
+        """Lines 120-121: OSError on file read -> continue."""
+        hist = tmp_path / ".aider.chat.history.md"
+        hist.write_text("Tokens: 1k sent, 1k received. Cost: $0.05\n")
+
+        def fake_open(path, **kwargs):
+            raise OSError("cannot read")
+
+        with patch(
+            "burnctl.collectors.aider._find_history_files",
+            return_value=[str(hist)],
+        ), patch(
+            "burnctl.collectors.aider.os.path.getmtime",
+            return_value=datetime(2026, 1, 1).timestamp(),
+        ), patch("builtins.open", side_effect=fake_open):
+            collector = AiderCollector()
+            stats = collector.get_stats(
+                datetime(2020, 1, 1), datetime(2030, 1, 1), datetime.now(),
+            )
+
+        assert stats is None
+
+    def test_no_cost_lines_returns_none(self, tmp_path):
+        """Line 134: match_count == 0 returns None."""
+        hist = tmp_path / ".aider.chat.history.md"
+        hist.write_text("Just some chat text\nNo cost lines here\n")
+
+        with patch(
+            "burnctl.collectors.aider._find_history_files",
+            return_value=[str(hist)],
+        ):
+            collector = AiderCollector()
+            stats = collector.get_stats(
+                datetime(2020, 1, 1), datetime(2030, 1, 1), datetime.now(),
+            )
+
+        assert stats is None
 
 
 # ── Local collector ──────────────────────────────────────────────

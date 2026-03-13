@@ -55,8 +55,8 @@ class GeminiCollector(BaseCollector):
         p_output_tokens = 0
         p_cost = 0.0
         p_tool_calls = 0
-        p_daily = {}
-        p_model_usage = {}
+        p_daily = {}  # type: dict
+        p_model_usage = {}  # type: dict
 
         a_messages = 0
         a_sessions = 0

@@ -1,0 +1,37 @@
+Burnctl Multi-Agent Usage Report
+
+Agent: Claude Code
+  Plan: max5x
+  Billing period: 2026-03-10 to 2026-04-10
+  Days remaining: 28 of 31
+  Pace: 5 percent of plan value used
+  Projected period cost: $47.53
+  Messages: 1,931
+  Sessions: 5
+  Output tokens: 185,081
+  Tool calls: 461
+  API-equivalent cost: $4.63
+  All-time value: $844.12
+  Value ratio: 4.2x
+  First session: 2026-01-10
+  Total messages: 29,328
+  Total sessions: 95
+
+Agent: Gemini CLI
+  Plan: pay-as-you-go
+  Billing period: 2026-03-01 to 2026-04-01
+  Days remaining: 19 of 31
+  Messages: 57
+  Sessions: 18
+  Output tokens: 45,000
+  Tool calls: 379
+  API-equivalent cost: $4.10
+  All-time value: $4.10
+  Value ratio: 0.0x
+  First session: 2026-02-12
+  Total messages: 57
+  Total sessions: 18
+
+System total period cost: $8.73
+
+Report date: 2026-03-13

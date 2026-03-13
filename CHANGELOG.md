@@ -1,0 +1,28 @@
+# Changelog
+
+All notable changes to this project will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [0.1.0] - 2026-03-13
+
+### Added
+
+- Initial release of burnctl — unified AI coding agent usage reporter
+- Collector-based architecture with per-agent plugins
+- Claude Code collector (reads `~/.claude/stats-cache.json`)
+- Gemini CLI collector (parses `~/.gemini/` session history)
+- OpenAI Codex CLI collector (parses `~/.codex/sessions/` JSONL)
+- Aider collector (parses `.aider.chat.history.md` cost lines)
+- Local/Ollama collector (detection stub, always $0)
+- Stub collectors for Cline, OpenCode, DebGPT (future support)
+- Multi-column terminal report with box drawing and ANSI colors
+- JSON, compact, accessible, and CSV export output formats
+- Persistent configuration at `~/.config/burnctl/config.json`
+- `--watch` mode for continuous refresh
+- `burnctl config` subcommand for viewing/setting preferences
+- `burnctl upgrade` subcommand for opening billing pages
+- Cross-platform support (Linux, macOS, Windows)
+- Python 3.8–3.13 compatibility
+- CI/CD with GitHub Actions (18 OS × Python matrix + vermin lint)

@@ -52,14 +52,26 @@ def _date_str(dt):
     return dt.strftime("%Y-%m-%d")
 
 
+# Skip session files larger than 50 MB to avoid unbounded memory usage.
+_MAX_SESSION_BYTES = 50 * 1024 * 1024
+
+
 def _iter_session_files():
-    """Yield absolute paths to every ``.jsonl`` file under SESSIONS_DIR."""
+    """Yield absolute paths to every ``.jsonl`` file under SESSIONS_DIR.
+
+    Files larger than ``_MAX_SESSION_BYTES`` are silently skipped.
+    """
     if not os.path.isdir(SESSIONS_DIR):
         return
     for dirpath, _dirnames, filenames in os.walk(SESSIONS_DIR):
         for fname in filenames:
             if fname.endswith(".jsonl"):
-                yield os.path.join(dirpath, fname)
+                full = os.path.join(dirpath, fname)
+                try:
+                    if os.path.getsize(full) <= _MAX_SESSION_BYTES:
+                        yield full
+                except OSError:
+                    continue
 
 
 def _parse_session(path):
@@ -233,8 +245,8 @@ class CodexCollector(BaseCollector):
         period_output_tokens = 0
         period_cost = 0.0
         period_tool_calls = 0
-        period_model_usage = {}
-        daily_messages = {}
+        period_model_usage = {}  # type: dict
+        daily_messages = {}  # type: dict
 
         # All-time accumulators
         alltime_cost = 0.0

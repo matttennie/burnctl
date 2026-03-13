@@ -7,6 +7,7 @@ multi-column box layout suitable for the terminal.
 import calendar
 import csv
 import json
+import math
 import os
 import re
 import sys
@@ -283,9 +284,6 @@ def sparkline(values):
     )
 
 
-_ANSI_RE = re.compile(r"\033\[[0-9;]*m")
-
-
 def _strip_ansi(text):
     """Remove ANSI escape sequences from *text*."""
     return _ANSI_RE.sub("", text)
@@ -447,7 +445,10 @@ def render_full(stats, simple=False, use_color=True, theme="gradient"):
     pace_cells = []
     pace_raw_cells = []
     for a in agents:
-        pct = min(a["pace_pct"], 100)
+        raw_pct = a["pace_pct"]
+        if math.isnan(raw_pct) or math.isinf(raw_pct):
+            raw_pct = 0.0
+        pct = min(raw_pct, 100)
         filled = int(pace_bar_w * pct / 100)
         empty = pace_bar_w - filled
         pct_label = f" {pct:.0f}%"
