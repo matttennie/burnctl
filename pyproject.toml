@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "burnctl"
+version = "0.1.0"
+description = "Unified AI coding agent usage reporter"
+readme = "README.md"
+license = "MIT"
+authors = [{name = "Matthew Tennie", email = "theaiorchard@gmail.com"}]
+requires-python = ">=3.8"
+dependencies = ["claude-usage>=0.1.0"]
+keywords = ["ai", "usage", "dashboard", "cli", "claude", "gemini", "codex"]
+
+[tool.setuptools.packages.find]
+include = ["burnctl*"]
+
+[project.scripts]
+burnctl = "burnctl.cli:main"
