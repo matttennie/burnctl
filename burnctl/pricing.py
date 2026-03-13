@@ -37,8 +37,17 @@ def get_agent_pricing(agent_id):
         An empty ``{}`` for local/free models.
     """
     if agent_id == "claude":
-        from claude_usage.pricing import get_pricing
-        return get_pricing()
+        try:
+            from claude_usage.pricing import get_pricing
+            return get_pricing()
+        except ImportError:
+            return {
+                "claude-opus-4-6": {"input": 5.0, "output": 25.0, "cache_read": 0.50, "cache_create": 6.25},
+                "claude-sonnet-4-6": {"input": 1.0, "output": 5.0, "cache_read": 0.10, "cache_create": 1.25},
+                "claude-opus-4-5": {"input": 5.0, "output": 25.0, "cache_read": 0.50, "cache_create": 6.25},
+                "claude-sonnet-4-5": {"input": 1.0, "output": 5.0, "cache_read": 0.10, "cache_create": 1.25},
+                "claude-haiku-4-5": {"input": 0.25, "output": 1.25, "cache_read": 0.025, "cache_create": 0.3125},
+            }
 
     if agent_id == "gemini":
         return dict(GEMINI_PRICING)

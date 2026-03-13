@@ -41,6 +41,7 @@ jobs:
           python -m burnctl --version
 
       - name: Test graceful handling without agent data
+        shell: bash
         run: |
           burnctl --aider 2>&1 || true
           burnctl -j 2>&1 || true
@@ -61,4 +62,4 @@ jobs:
         run: pip install vermin
 
       - name: Check minimum Python version
-        run: vermin --target=3.8 --backport argparse burnctl/ tests/
+        run: vermin --target=3.8- --backport argparse burnctl/ tests/

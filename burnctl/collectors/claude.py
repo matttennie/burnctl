@@ -59,11 +59,25 @@ class ClaudeCollector(BaseCollector):
             print(f"Warning: could not read Claude stats: {exc}", file=sys.stderr)
             return None
 
+    @staticmethod
+    def _fallback_pricing():
+        """Hardcoded Claude pricing when claude_usage is not installed."""
+        dp = _default_pricing()
+        return {
+            "claude-opus-4-6": {"input": 5.0, "output": 25.0, "cache_read": 0.50, "cache_create": 6.25},
+            "claude-sonnet-4-6": {"input": 1.0, "output": 5.0, "cache_read": 0.10, "cache_create": 1.25},
+            "claude-opus-4-5": dp,
+            "claude-sonnet-4-5": {"input": 1.0, "output": 5.0, "cache_read": 0.10, "cache_create": 1.25},
+            "claude-haiku-4-5": {"input": 0.25, "output": 1.25, "cache_read": 0.025, "cache_create": 0.3125},
+        }
+
     def _get_pricing_table(self, data):
         """Return the Claude pricing table, refreshing if unknown models appear."""
-        from claude_usage.pricing import get_pricing
-
-        pricing_table = get_pricing()
+        try:
+            from claude_usage.pricing import get_pricing
+            pricing_table = get_pricing()
+        except ImportError:
+            pricing_table = self._fallback_pricing()
 
         # Collect every model id referenced in the data
         all_models = set(data.get("modelUsage", {}).keys())

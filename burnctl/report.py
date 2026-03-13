@@ -13,6 +13,77 @@ import sys
 from datetime import datetime, timedelta
 
 
+# ── Fallback theme (when claude_usage is not installed) ────────────
+
+_ANSI_RE = re.compile(r'\033\[[0-9;]*m')
+
+
+class _FallbackTheme:
+    """Minimal theme that works without claude_usage.colors."""
+
+    def __init__(self, use_color=True):
+        self.enabled = use_color
+        self._grad = []
+
+    def _wrap(self, code, text):
+        if not self.enabled:
+            return str(text)
+        return f"\033[{code}m{text}\033[0m"
+
+    def border(self, ch):
+        return self._wrap("36", ch)
+
+    def border_line(self, text):
+        return self._wrap("36", text)
+
+    def title(self, text):
+        return self._wrap("1;97", text)
+
+    def accent(self, text):
+        return self._wrap("36", text)
+
+    def highlight(self, text):
+        return self._wrap("33", text)
+
+    def warm(self, text):
+        return self._wrap("33", text)
+
+    def success(self, text):
+        return self._wrap("32", text)
+
+    def muted(self, text):
+        return self._wrap("2", text)
+
+    def bold(self, text):
+        return self._wrap("1", text)
+
+    def stat_icon_color(self, index):
+        colors = ["36", "34", "33", "32", "35"]
+        return f"\033[{colors[index % len(colors)]}m" if self.enabled else ""
+
+    def progress_bar(self, filled, empty, width):
+        f_str = "\u2588" * filled
+        e_str = "\u2591" * empty
+        if not self.enabled:
+            return f_str + e_str
+        return f"\033[34m{f_str}\033[2m{e_str}\033[0m"
+
+    def value_bar(self, paid_w, value_w):
+        block = "\u2588"
+        if not self.enabled:
+            return block * (paid_w + value_w)
+        paid = block * paid_w
+        val = block * value_w
+        return f"\033[31m{paid}\033[32m{val}\033[0m"
+
+    def model_bar(self, filled, empty, model_name):
+        f_str = "\u2593" * filled
+        e_str = "\u2591" * empty
+        if not self.enabled:
+            return f_str + e_str
+        return f"\033[36m{f_str}\033[2m{e_str}\033[0m"
+
+
 # ── Period calculation ──────────────────────────────────────────────
 
 
@@ -237,9 +308,12 @@ def render_full(stats, simple=False, use_color=True, theme="gradient"):
     theme : str
         One of ``"gradient"``, ``"classic"``, ``"colorblind"``, ``"accessible"``.
     """
-    from claude_usage.colors import get_theme  # noqa: F401 — gradient_str/R used via theme
+    try:
+        from claude_usage.colors import get_theme
+        th = get_theme(theme, use_color=use_color)
+    except ImportError:
+        th = _FallbackTheme(use_color)
 
-    th = get_theme(theme, use_color=use_color)
     agents = stats["agents"]
     if not agents:
         return "No agent data available."
