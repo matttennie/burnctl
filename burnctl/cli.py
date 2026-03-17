@@ -72,6 +72,11 @@ def _build_parser():
         help="Color theme (default: config value or gradient)",
     )
     fmt_group.add_argument(
+        "--no-activity",
+        action="store_true",
+        help="Hide the DAILY ACTIVITY section",
+    )
+    fmt_group.add_argument(
         "-A", "--accessible",
         action="store_true",
         help="Plain text, screen-reader friendly output",
@@ -96,9 +101,20 @@ def _build_parser():
     )
     billing_group.add_argument(
         "-P", "--period",
-        choices=["current", "last"],
+        choices=["current", "last", "diff"],
         default="current",
-        help="Which billing period to report (default: current)",
+        help="Which billing period to report (default: current). "
+        "'diff' shows both periods side by side.",
+    )
+    billing_group.add_argument(
+        "--since",
+        metavar="YYYY-MM-DD",
+        help="Start date for custom date range (overrides billing period)",
+    )
+    billing_group.add_argument(
+        "--until",
+        metavar="YYYY-MM-DD",
+        help="End date for custom date range (default: today)",
     )
 
     # Other
@@ -197,6 +213,8 @@ def _merge_config(args, config):
         config["simple"] = True
     if args.compact:
         config["compact"] = True
+    if args.no_activity:
+        config["no_activity"] = True
     return config
 
 
@@ -226,7 +244,11 @@ def _handle_config(args):
 
 
 def _handle_upgrade(args, collectors):
-    """Handle the ``upgrade`` subcommand."""
+    """Handle the ``upgrade`` subcommand.
+
+    When no agent is specified and ``--all`` is not set, opens the
+    billing page for whichever agent is most over-pacing.
+    """
     if args.agent:
         c = _COLLECTOR_MAP.get(args.agent)
         if c is None:
@@ -244,37 +266,103 @@ def _handle_upgrade(args, collectors):
             print(f"{c.name} has no upgrade URL.")
         return
 
-    targets = collectors if args.upgrade_all else [
-        c for c in collectors if c.is_available()
-    ]
-    if not targets:
+    if args.upgrade_all:
+        targets = [c for c in collectors if c.is_available()]
+        if not targets:
+            print("No agents available to upgrade.", file=sys.stderr)
+            sys.exit(1)
+        for c in targets:
+            url = c.get_upgrade_url()
+            if url:
+                print(f"Opening {c.name}: {url}")
+                webbrowser.open(url)
+            else:
+                print(f"{c.name}: no upgrade URL available.")
+        return
+
+    # No agent specified: find the most over-pacing agent
+    from burnctl.config import load as load_config
+    from burnctl.report import aggregate_stats
+
+    config = load_config()
+    available = [c for c in collectors if c.is_available()]
+    if not available:
         print("No agents available to upgrade.", file=sys.stderr)
         sys.exit(1)
 
-    for c in targets:
+    agg = aggregate_stats(available, config)
+    active = [a for a in agg["agents"] if not a.get("inactive")]
+    if active:
+        worst = max(active, key=lambda a: a["pace_pct"])
+        c = _COLLECTOR_MAP.get(worst["id"])
+        if c:
+            url = c.get_upgrade_url()
+            if url:
+                pct = worst["pace_pct"]
+                print(
+                    f"Opening billing page for {worst['name']} "
+                    f"({pct:.0f}% pacing): {url}",
+                )
+                webbrowser.open(url)
+                return
+
+    # Fallback: open all
+    for c in available:
         url = c.get_upgrade_url()
         if url:
             print(f"Opening {c.name}: {url}")
             webbrowser.open(url)
-        else:
-            print(f"{c.name}: no upgrade URL available.")
 
 
 # ── Report rendering ────────────────────────────────────────────────
 
 def _render_report(args, config, collectors):
     """Run data collection and render the report."""
+    from datetime import datetime as _dt
+
     from burnctl.report import (
         aggregate_stats,
         export_csv,
         render_accessible,
         render_compact,
+        render_diff,
         render_full,
         render_json,
     )
 
+    start_override = end_override = None
+    since = getattr(args, "since", None)
+    until = getattr(args, "until", None)
+    if since:
+        try:
+            start_override = _dt.strptime(since, "%Y-%m-%d")
+        except ValueError:
+            print(
+                "Error: --since must be YYYY-MM-DD.", file=sys.stderr,
+            )
+            sys.exit(1)
+        if until:
+            try:
+                end_override = _dt.strptime(until, "%Y-%m-%d")
+            except ValueError:
+                print(
+                    "Error: --until must be YYYY-MM-DD.",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+
+    # Period-over-period diff mode
+    if args.period == "diff":
+        cur = aggregate_stats(collectors, config, offset=0)
+        prev = aggregate_stats(collectors, config, offset=-1)
+        return render_diff(cur, prev)
+
     offset = -1 if args.period == "last" else 0
-    agg = aggregate_stats(collectors, config, offset=offset)
+    agg = aggregate_stats(
+        collectors, config, offset=offset,
+        start_override=start_override,
+        end_override=end_override,
+    )
 
     if not agg["agents"]:
         print("No data available for the selected period.", file=sys.stderr)
@@ -297,12 +385,14 @@ def _render_report(args, config, collectors):
     use_color = not config.get("no_color", False)
     theme_name = config.get("theme", "gradient")
     simple = config.get("simple", False)
+    no_activity = config.get("no_activity", False)
 
     return render_full(
         agg,
         simple=simple,
         use_color=use_color,
         theme=theme_name,
+        no_activity=no_activity,
     )
 
 

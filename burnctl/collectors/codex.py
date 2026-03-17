@@ -168,7 +168,7 @@ def _parse_session(path):
 
 def _default_model_pricing():
     """Fallback pricing for unknown Codex/OpenAI models (per 1M tokens)."""
-    return {"input": 1.50, "output": 6.0, "cache_read": 0.375}
+    return {"input": 2.50, "output": 15.0, "cache_read": 0.25}
 
 
 def _compute_session_cost(token_usage, model_pricing):
@@ -402,10 +402,12 @@ class CodexCollector(BaseCollector):
         return "https://platform.openai.com/usage"
 
     def get_plan_info(self, config):
-        """Codex CLI is pay-as-you-go via OpenAI API credits."""
+        from burnctl.config import CODEX_PLAN_PRICES
+        plan = config.get("codex_plan", "none")
+        price = CODEX_PLAN_PRICES.get(plan, 0)
         return {
-            "plan_name": "pay-as-you-go",
-            "plan_price": 0,
+            "plan_name": plan,
+            "plan_price": price,
             "billing_day": config.get("billing_day", 1),
             "interval": "mo",
         }

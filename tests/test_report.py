@@ -19,6 +19,7 @@ from burnctl.report import (
     fmt_usd,
     render_accessible,
     render_compact,
+    render_diff,
     render_full,
     render_json,
     sparkline,
@@ -342,10 +343,11 @@ class TestAggregateStats:
         assert len(result["agents"]) == 2
         assert result["total_period_cost"] == 15.0
 
-    def test_collector_returning_none_is_skipped(self):
+    def test_unavailable_collector_returning_none_is_skipped(self):
         c1 = _make_collector(collector_id="claude", name="Claude")
         c2 = _make_collector(collector_id="broken", name="Broken")
         c2.get_stats.return_value = None
+        c2.is_available.return_value = False
         config = {}
         ref = datetime(2025, 1, 16)
 
@@ -354,6 +356,22 @@ class TestAggregateStats:
         assert len(result["agents"]) == 1
         assert result["agents"][0]["id"] == "claude"
 
+    def test_available_collector_returning_none_shown_inactive(self):
+        c1 = _make_collector(collector_id="claude", name="Claude")
+        c2 = _make_collector(collector_id="idle", name="Idle")
+        c2.get_stats.return_value = None
+        c2.is_available.return_value = True
+        config = {}
+        ref = datetime(2025, 1, 16)
+
+        result = aggregate_stats([c1, c2], config, ref_date=ref)
+
+        assert len(result["agents"]) == 2
+        assert result["agents"][0]["id"] == "claude"
+        assert result["agents"][1]["id"] == "idle"
+        assert result["agents"][1].get("inactive") is True
+        assert result["agents"][1]["messages"] == 0
+
     def test_empty_collectors_list(self):
         result = aggregate_stats([], {}, ref_date=datetime(2025, 1, 16))
 
@@ -361,13 +379,23 @@ class TestAggregateStats:
         assert result["total_period_cost"] == 0.0
         assert result["today"] == "2025-01-16"
 
-    def test_all_collectors_return_none(self):
+    def test_all_collectors_return_none_unavailable(self):
         c = _make_collector()
         c.get_stats.return_value = None
+        c.is_available.return_value = False
         result = aggregate_stats([c], {}, ref_date=datetime(2025, 1, 16))
 
         assert result["agents"] == []
         assert result["total_period_cost"] == 0.0
+
+    def test_all_collectors_return_none_available(self):
+        c = _make_collector()
+        c.get_stats.return_value = None
+        c.is_available.return_value = True
+        result = aggregate_stats([c], {}, ref_date=datetime(2025, 1, 16))
+
+        assert len(result["agents"]) == 1
+        assert result["agents"][0].get("inactive") is True
 
     def test_value_ratio_with_first_session(self):
         c = _make_collector(
@@ -893,6 +921,169 @@ class TestRenderFull:
         assert "100%" in result
 
 
+# ── Model breakdown percentage labels & token consistency ────────
+
+
+class TestModelBreakdownPctLabel:
+    """Test <1% display for tiny fractions and token consistency between sections."""
+
+    @patch("os.get_terminal_size")
+    def test_tiny_fraction_shows_less_than_one_pct(self, mock_term):
+        """A model with 1 token out of 1,000,000 total should show '<1%'."""
+        mock_term.return_value = os.terminal_size((120, 40))
+        agent = _make_agent_data(
+            output_tokens=1000000,
+            model_usage={
+                "claude-3-opus-20251101": {"outputTokens": 999999},
+                "claude-3-sonnet-20251101": {"outputTokens": 1},
+            },
+        )
+        stats = _make_stats(agents=[agent])
+        result = render_full(stats, use_color=False)
+        assert "<1%" in result
+
+    @patch("os.get_terminal_size")
+    def test_zero_tokens_shows_zero_pct(self, mock_term):
+        """A model with 0 tokens should show '0%', not '<1%'."""
+        mock_term.return_value = os.terminal_size((120, 40))
+        agent = _make_agent_data(
+            output_tokens=1000,
+            model_usage={
+                "claude-3-opus-20251101": {"outputTokens": 1000},
+                "claude-3-sonnet-20251101": {"outputTokens": 0},
+            },
+        )
+        stats = _make_stats(agents=[agent])
+        result = render_full(stats, use_color=False)
+        assert "0%" in result
+        # The zero-token model row itself should NOT show "<1%"
+        lines = result.split("\n")
+        for line in lines:
+            if "sonnet" in line.lower():
+                assert "<1%" not in line
+                assert "0%" in line
+
+    @patch("os.get_terminal_size")
+    def test_fifty_pct_shows_50(self, mock_term):
+        """A model with exactly 50% should show '50%'."""
+        mock_term.return_value = os.terminal_size((120, 40))
+        agent = _make_agent_data(
+            output_tokens=2000,
+            model_usage={
+                "claude-3-opus-20251101": {"outputTokens": 1000},
+                "claude-3-sonnet-20251101": {"outputTokens": 1000},
+            },
+        )
+        stats = _make_stats(agents=[agent])
+        result = render_full(stats, use_color=False)
+        assert "50%" in result
+
+    @patch("os.get_terminal_size")
+    def test_multiple_models_one_tiny_fraction(self, mock_term):
+        """Multiple models where one has a tiny fraction: only tiny one shows '<1%'."""
+        mock_term.return_value = os.terminal_size((120, 40))
+        agent = _make_agent_data(
+            output_tokens=100001,
+            model_usage={
+                "claude-3-opus-20251101": {"outputTokens": 90000},
+                "claude-3-sonnet-20251101": {"outputTokens": 10000},
+                "claude-3-haiku-20251101": {"outputTokens": 1},
+            },
+        )
+        stats = _make_stats(agents=[agent])
+        result = render_full(stats, use_color=False)
+        lines = result.split("\n")
+        for line in lines:
+            if "haiku" in line.lower():
+                assert "<1%" in line
+                break
+        else:
+            pytest.fail("haiku model row not found in output")
+
+    @patch("os.get_terminal_size")
+    def test_model_breakdown_total_matches_period_output_tokens(self, mock_term):
+        """MODEL BREAKDOWN total should match the 'Output Tokens' in PERIOD USAGE."""
+        mock_term.return_value = os.terminal_size((120, 40))
+        # model_usage outputTokens sum to 50,000 which equals output_tokens
+        agent = _make_agent_data(
+            output_tokens=50000,
+            model_usage={
+                "claude-3-opus-20251101": {"outputTokens": 30000},
+                "claude-3-sonnet-20251101": {"outputTokens": 20000},
+            },
+        )
+        stats = _make_stats(agents=[agent])
+        result = render_full(stats, use_color=False)
+        # Both sections should contain the same formatted token count
+        assert "50,000" in result
+        # Count occurrences: period usage row + at least model breakdown rows
+        # The period usage "Output Tokens" row shows 50,000
+        # The model breakdown individual rows show 30,000 and 20,000
+        lines = result.split("\n")
+        period_output_tokens = None
+        for line in lines:
+            if "Output Tokens" in line:
+                # Extract the formatted number from the period usage row
+                match = re.search(r"[\d,]+", line.replace("Output Tokens", ""))
+                if match:
+                    period_output_tokens = match.group()
+                break
+        assert period_output_tokens == "50,000"
+        # Verify model rows sum to the same total
+        model_tok_sum = 0
+        in_model_section = False
+        for line in lines:
+            if "MODEL BREAKDOWN" in line:
+                in_model_section = True
+                continue
+            if in_model_section and "tok" in line:
+                tok_match = re.search(r"([\d,]+)\s+tok", line)
+                if tok_match:
+                    model_tok_sum += int(tok_match.group(1).replace(",", ""))
+            if in_model_section and "DAILY ACTIVITY" in line:
+                break
+        assert model_tok_sum == 50000
+
+    @patch("os.get_terminal_size")
+    def test_model_breakdown_consistent_with_varied_tokens(self, mock_term):
+        """Token consistency with an asymmetric split across models."""
+        mock_term.return_value = os.terminal_size((120, 40))
+        agent = _make_agent_data(
+            output_tokens=75000,
+            model_usage={
+                "claude-3-opus-20251101": {"outputTokens": 50000},
+                "claude-3-sonnet-20251101": {"outputTokens": 25000},
+            },
+        )
+        stats = _make_stats(agents=[agent])
+        result = render_full(stats, use_color=False)
+        # Period usage row should show 75,000
+        assert "75,000" in result
+        # Model rows should show 50,000 and 25,000
+        assert "50,000" in result
+        assert "25,000" in result
+
+    @patch("os.get_terminal_size")
+    def test_single_model_shows_100_pct(self, mock_term):
+        """A single model should show '100%'."""
+        mock_term.return_value = os.terminal_size((120, 40))
+        agent = _make_agent_data(
+            output_tokens=10000,
+            model_usage={
+                "claude-3-opus-20251101": {"outputTokens": 10000},
+            },
+        )
+        stats = _make_stats(agents=[agent])
+        result = render_full(stats, use_color=False)
+        lines = result.split("\n")
+        for line in lines:
+            if "opus" in line.lower() and "tok" in line:
+                assert "100%" in line
+                break
+        else:
+            pytest.fail("opus model row not found in output")
+
+
 # ── render_json ──────────────────────────────────────────────────
 
 
@@ -1151,3 +1342,543 @@ class TestExportCsv:
         export_csv(stats, filepath=filepath)
         captured = capsys.readouterr()
         assert "Exported 1 agent(s)" in captured.out
+
+
+# ── Inactive agents ─────────────────────────────────────────────
+
+
+def _make_inactive_agent(**overrides):
+    """Build an inactive agent data dict with zeroed stats."""
+    base = {
+        "id": "idle",
+        "name": "Idle Agent",
+        "plan_name": "pro",
+        "plan_price": 20.0,
+        "interval": "mo",
+        "period_start": "2025-01-01",
+        "period_end": "2025-02-01",
+        "days_elapsed": 15,
+        "days_remaining": 16,
+        "total_days": 31,
+        "pace_pct": 0.0,
+        "projected_cost": 0.0,
+        "messages": 0,
+        "sessions": 0,
+        "output_tokens": 0,
+        "tool_calls": 0,
+        "period_cost": 0.0,
+        "alltime_cost": 0.0,
+        "value_ratio": 0.0,
+        "model_usage": {},
+        "daily_messages": {},
+        "spark_data": [],
+        "first_session": "",
+        "total_messages": 0,
+        "total_sessions": 0,
+        "inactive": True,
+    }
+    base.update(overrides)
+    return base
+
+
+class TestInactiveAgents:
+    """Tests for the inactive agent feature."""
+
+    def test_inactive_agent_has_all_expected_keys(self):
+        """Inactive agent dict should contain all standard keys."""
+        agent = _make_inactive_agent()
+        expected_keys = [
+            "id", "name", "plan_name", "plan_price", "interval",
+            "period_start", "period_end", "days_elapsed", "days_remaining",
+            "total_days", "pace_pct", "projected_cost", "messages",
+            "sessions", "output_tokens", "tool_calls", "period_cost",
+            "alltime_cost", "value_ratio", "model_usage", "daily_messages",
+            "spark_data", "first_session", "total_messages", "total_sessions",
+            "inactive",
+        ]
+        for key in expected_keys:
+            assert key in agent, "missing key: %s" % key
+
+    def test_inactive_agent_has_zeroed_stats(self):
+        """Inactive agent should have zero values for all numeric stats."""
+        agent = _make_inactive_agent()
+        assert agent["messages"] == 0
+        assert agent["sessions"] == 0
+        assert agent["output_tokens"] == 0
+        assert agent["tool_calls"] == 0
+        assert agent["period_cost"] == 0.0
+        assert agent["alltime_cost"] == 0.0
+        assert agent["projected_cost"] == 0.0
+        assert agent["pace_pct"] == 0.0
+        assert agent["value_ratio"] == 0.0
+        assert agent["total_messages"] == 0
+        assert agent["total_sessions"] == 0
+
+    def test_inactive_agent_has_inactive_flag(self):
+        """Inactive agent should have inactive=True."""
+        agent = _make_inactive_agent()
+        assert agent["inactive"] is True
+
+    def test_active_agent_has_no_inactive_flag(self):
+        """Active agents should not have the inactive key."""
+        agent = _make_agent_data()
+        assert "inactive" not in agent
+
+    def test_aggregate_stats_inactive_via_available_none(self):
+        """When get_stats returns None but is_available returns True,
+        the agent should appear with inactive=True and zeroed stats."""
+        c = _make_collector(collector_id="idle", name="Idle Agent")
+        c.get_stats.return_value = None
+        c.is_available.return_value = True
+
+        result = aggregate_stats([c], {}, ref_date=datetime(2025, 1, 16))
+
+        assert len(result["agents"]) == 1
+        agent = result["agents"][0]
+        assert agent["inactive"] is True
+        assert agent["messages"] == 0
+        assert agent["sessions"] == 0
+        assert agent["period_cost"] == 0.0
+
+    def test_inactive_agent_does_not_contribute_to_total_period_cost(self):
+        """Inactive agents have period_cost=0 and should not
+        inflate total_period_cost."""
+        active = _make_collector(
+            collector_id="claude", name="Claude",
+            stats={"period_cost": 10.0},
+        )
+        inactive = _make_collector(
+            collector_id="idle", name="Idle",
+        )
+        inactive.get_stats.return_value = None
+        inactive.is_available.return_value = True
+
+        result = aggregate_stats(
+            [active, inactive], {}, ref_date=datetime(2025, 1, 16),
+        )
+
+        assert result["total_period_cost"] == 10.0
+
+    def test_mix_active_and_inactive_agents_in_stats(self):
+        """Both active and inactive agents should appear in the agents list."""
+        active = _make_collector(
+            collector_id="claude", name="Claude",
+            stats={"period_cost": 15.0},
+        )
+        inactive = _make_collector(
+            collector_id="idle", name="Idle",
+        )
+        inactive.get_stats.return_value = None
+        inactive.is_available.return_value = True
+
+        result = aggregate_stats(
+            [active, inactive], {}, ref_date=datetime(2025, 1, 16),
+        )
+
+        assert len(result["agents"]) == 2
+        ids = [a["id"] for a in result["agents"]]
+        assert "claude" in ids
+        assert "idle" in ids
+        inactive_agent = [a for a in result["agents"] if a["id"] == "idle"][0]
+        assert inactive_agent["inactive"] is True
+        active_agent = [a for a in result["agents"] if a["id"] == "claude"][0]
+        assert "inactive" not in active_agent
+
+    @patch("os.get_terminal_size")
+    def test_render_full_inactive_shows_inactive_in_header(self, mock_term):
+        """render_full should show '(inactive)' in the column header
+        for inactive agents."""
+        mock_term.return_value = os.terminal_size((120, 40))
+        active = _make_agent_data(id="claude", name="Claude")
+        inactive = _make_inactive_agent(id="idle", name="Idle")
+        stats = _make_stats(agents=[active, inactive])
+
+        result = render_full(stats, use_color=False)
+
+        assert "(inactive)" in result
+
+    @patch("os.get_terminal_size")
+    def test_render_full_active_no_inactive_label(self, mock_term):
+        """render_full should not show '(inactive)' for active agents."""
+        mock_term.return_value = os.terminal_size((120, 40))
+        stats = _make_stats()
+
+        result = render_full(stats, use_color=False)
+
+        assert "(inactive)" not in result
+
+    @patch("os.get_terminal_size")
+    def test_render_full_only_inactive_agents(self, mock_term):
+        """render_full should handle a report with only inactive agents."""
+        mock_term.return_value = os.terminal_size((120, 40))
+        inactive = _make_inactive_agent()
+        stats = _make_stats(agents=[inactive])
+
+        result = render_full(stats, use_color=False)
+
+        assert "(inactive)" in result
+        assert "USAGE REPORT" in result
+
+    @patch("os.get_terminal_size")
+    def test_render_full_mixed_does_not_crash(self, mock_term):
+        """render_full should complete without error for mixed agents."""
+        mock_term.return_value = os.terminal_size((120, 40))
+        active = _make_agent_data(id="claude", name="Claude")
+        inactive = _make_inactive_agent(id="idle", name="Idle")
+        stats = _make_stats(agents=[active, inactive])
+
+        # Should not raise
+        result = render_full(stats, use_color=False)
+        assert isinstance(result, str)
+        assert len(result) > 0
+
+    def test_render_compact_inactive(self):
+        """render_compact should include inactive agents with $0.00."""
+        active = _make_agent_data(name="Claude", period_cost=10.0)
+        inactive = _make_inactive_agent(name="Idle")
+        stats = _make_stats(
+            agents=[active, inactive], total_period_cost=10.0,
+        )
+
+        result = render_compact(stats)
+
+        assert "Claude: $10.00" in result
+        assert "Idle: $0.00" in result
+        assert "Total: $10.00" in result
+
+    def test_render_accessible_inactive(self):
+        """render_accessible should include inactive agents without crashing."""
+        active = _make_agent_data(name="Claude")
+        inactive = _make_inactive_agent(name="Idle")
+        stats = _make_stats(agents=[active, inactive])
+
+        result = render_accessible(stats)
+
+        assert "Agent: Claude" in result
+        assert "Agent: Idle" in result
+        assert "\033[" not in result
+
+    def test_render_json_inactive(self):
+        """render_json should include the inactive flag in output."""
+        inactive = _make_inactive_agent()
+        stats = _make_stats(agents=[inactive])
+
+        result = render_json(stats)
+        parsed = json.loads(result)
+
+        assert len(parsed["agents"]) == 1
+        assert parsed["agents"][0]["inactive"] is True
+        assert parsed["agents"][0]["messages"] == 0
+
+    def test_render_json_mixed_active_inactive(self):
+        """render_json should correctly represent both active and inactive."""
+        active = _make_agent_data(id="claude", name="Claude")
+        inactive = _make_inactive_agent(id="idle", name="Idle")
+        stats = _make_stats(agents=[active, inactive])
+
+        result = render_json(stats)
+        parsed = json.loads(result)
+
+        assert len(parsed["agents"]) == 2
+        claude = [a for a in parsed["agents"] if a["id"] == "claude"][0]
+        idle = [a for a in parsed["agents"] if a["id"] == "idle"][0]
+        assert "inactive" not in claude
+        assert idle["inactive"] is True
+
+
+# ── render_diff ─────────────────────────────────────────────────
+
+
+class TestRenderDiff:
+    """Tests for the render_diff period-over-period comparison."""
+
+    def test_basic_diff_one_agent_both_periods(self):
+        """Single agent present in both current and previous periods."""
+        prev = _make_stats(
+            agents=[_make_agent_data(
+                id="claude", name="Claude",
+                messages=80, sessions=8, period_cost=10.0,
+                period_start="2024-12-01", period_end="2025-01-01",
+            )],
+            total_period_cost=10.0,
+            today="2025-01-16",
+        )
+        cur = _make_stats(
+            agents=[_make_agent_data(
+                id="claude", name="Claude",
+                messages=100, sessions=10, period_cost=12.50,
+                period_start="2025-01-01", period_end="2025-02-01",
+            )],
+            total_period_cost=12.50,
+            today="2025-01-16",
+        )
+
+        result = render_diff(cur, prev)
+
+        assert "Claude" in result
+        assert "100" in result
+        assert "80" in result
+
+    def test_agent_only_in_current(self):
+        """Agent present only in current period should show zeroed previous."""
+        prev = _make_stats(agents=[], total_period_cost=0.0)
+        cur = _make_stats(
+            agents=[_make_agent_data(
+                id="claude", name="Claude",
+                messages=50, period_cost=5.0,
+            )],
+            total_period_cost=5.0,
+        )
+
+        result = render_diff(cur, prev)
+
+        assert "Claude" in result
+        assert "50" in result
+        # Previous values shown as "?" for missing period dates
+        assert "?" in result
+
+    def test_agent_only_in_previous(self):
+        """Agent present only in previous period should show zeroed current."""
+        prev = _make_stats(
+            agents=[_make_agent_data(
+                id="claude", name="Claude",
+                messages=80, period_cost=10.0,
+                period_start="2024-12-01", period_end="2025-01-01",
+            )],
+            total_period_cost=10.0,
+        )
+        cur = _make_stats(agents=[], total_period_cost=0.0)
+
+        result = render_diff(cur, prev)
+
+        assert "Claude" in result
+        assert "80" in result
+
+    def test_multiple_agents(self):
+        """Diff with multiple agents in both periods."""
+        prev_agents = [
+            _make_agent_data(
+                id="claude", name="Claude",
+                messages=80, period_cost=10.0,
+                period_start="2024-12-01", period_end="2025-01-01",
+            ),
+            _make_agent_data(
+                id="gemini", name="Gemini",
+                messages=60, period_cost=8.0,
+                period_start="2024-12-01", period_end="2025-01-01",
+            ),
+        ]
+        cur_agents = [
+            _make_agent_data(
+                id="claude", name="Claude",
+                messages=100, period_cost=12.50,
+            ),
+            _make_agent_data(
+                id="gemini", name="Gemini",
+                messages=90, period_cost=11.0,
+            ),
+        ]
+        prev = _make_stats(agents=prev_agents, total_period_cost=18.0)
+        cur = _make_stats(agents=cur_agents, total_period_cost=23.50)
+
+        result = render_diff(cur, prev)
+
+        assert "Claude" in result
+        assert "Gemini" in result
+        assert "System Total" in result
+
+    def test_empty_agents_both_periods(self):
+        """Both periods with no agents should return the no-data message."""
+        prev = _make_stats(agents=[], total_period_cost=0.0)
+        cur = _make_stats(agents=[], total_period_cost=0.0)
+
+        result = render_diff(cur, prev)
+
+        assert result == "No agent data available."
+
+    def test_column_headers_present(self):
+        """Output should contain the expected column headers."""
+        prev = _make_stats(
+            agents=[_make_agent_data(id="claude", name="Claude")],
+        )
+        cur = _make_stats(
+            agents=[_make_agent_data(id="claude", name="Claude")],
+        )
+
+        result = render_diff(cur, prev)
+
+        assert "Last" in result
+        assert "Current" in result
+        assert "Delta" in result
+
+    def test_delta_positive_sign(self):
+        """Delta should show '+' for increases."""
+        prev = _make_stats(
+            agents=[_make_agent_data(
+                id="claude", name="Claude",
+                messages=50, period_cost=5.0,
+                period_start="2024-12-01", period_end="2025-01-01",
+            )],
+            total_period_cost=5.0,
+        )
+        cur = _make_stats(
+            agents=[_make_agent_data(
+                id="claude", name="Claude",
+                messages=100, period_cost=12.50,
+            )],
+            total_period_cost=12.50,
+        )
+
+        result = render_diff(cur, prev)
+
+        assert "+50" in result
+        assert "+$7.50" in result
+
+    def test_delta_negative_sign(self):
+        """Delta should show '-' for decreases."""
+        prev = _make_stats(
+            agents=[_make_agent_data(
+                id="claude", name="Claude",
+                messages=100, period_cost=12.50,
+                period_start="2024-12-01", period_end="2025-01-01",
+            )],
+            total_period_cost=12.50,
+        )
+        cur = _make_stats(
+            agents=[_make_agent_data(
+                id="claude", name="Claude",
+                messages=50, period_cost=5.0,
+            )],
+            total_period_cost=5.0,
+        )
+
+        result = render_diff(cur, prev)
+
+        assert "-50" in result
+        # _diff_str formats negative USD as "$-7.50" (sign before digits)
+        assert "$-7.50" in result
+
+    def test_delta_zero_shows_plus(self):
+        """Delta of zero should show '+0'."""
+        agent = _make_agent_data(id="claude", name="Claude")
+        prev = _make_stats(agents=[agent])
+        cur = _make_stats(agents=[agent])
+
+        result = render_diff(cur, prev)
+
+        assert "+0" in result
+
+    def test_system_total_line_present(self):
+        """Output should contain a System Total line."""
+        prev = _make_stats(
+            agents=[_make_agent_data(id="claude", name="Claude")],
+            total_period_cost=12.50,
+        )
+        cur = _make_stats(
+            agents=[_make_agent_data(id="claude", name="Claude")],
+            total_period_cost=12.50,
+        )
+
+        result = render_diff(cur, prev)
+
+        assert "System Total" in result
+
+    def test_system_total_shows_arrow(self):
+        """System total should show prev -> cur format."""
+        prev = _make_stats(
+            agents=[_make_agent_data(
+                id="claude", name="Claude", period_cost=10.0,
+            )],
+            total_period_cost=10.0,
+        )
+        cur = _make_stats(
+            agents=[_make_agent_data(
+                id="claude", name="Claude", period_cost=15.0,
+            )],
+            total_period_cost=15.0,
+        )
+
+        result = render_diff(cur, prev)
+
+        assert "$10.00 ->" in result
+        assert "$15.00" in result
+
+    def test_generated_date_in_footer(self):
+        """Output should include the generated date from current stats."""
+        prev = _make_stats(
+            agents=[_make_agent_data(id="claude", name="Claude")],
+            today="2025-01-01",
+        )
+        cur = _make_stats(
+            agents=[_make_agent_data(id="claude", name="Claude")],
+            today="2025-02-01",
+        )
+
+        result = render_diff(cur, prev)
+
+        assert "Generated: 2025-02-01" in result
+
+    def test_period_header_title(self):
+        """Output should include the diff report title."""
+        prev = _make_stats(
+            agents=[_make_agent_data(id="claude", name="Claude")],
+        )
+        cur = _make_stats(
+            agents=[_make_agent_data(id="claude", name="Claude")],
+        )
+
+        result = render_diff(cur, prev)
+
+        assert "BURNCTL PERIOD-OVER-PERIOD DIFF" in result
+
+    def test_metrics_rows_present(self):
+        """All expected metric labels should appear in the output."""
+        prev = _make_stats(
+            agents=[_make_agent_data(id="claude", name="Claude")],
+        )
+        cur = _make_stats(
+            agents=[_make_agent_data(id="claude", name="Claude")],
+        )
+
+        result = render_diff(cur, prev)
+
+        assert "Messages" in result
+        assert "Sessions" in result
+        assert "Output Tokens" in result
+        assert "Tool Calls" in result
+        assert "Est. API Cost" in result
+
+    def test_agent_order_preserves_current_first(self):
+        """Agents from current should appear before agents only in previous."""
+        prev = _make_stats(
+            agents=[
+                _make_agent_data(id="old_agent", name="Old"),
+            ],
+        )
+        cur = _make_stats(
+            agents=[
+                _make_agent_data(id="new_agent", name="New"),
+            ],
+        )
+
+        result = render_diff(cur, prev)
+
+        new_pos = result.index("New")
+        old_pos = result.index("Old")
+        assert new_pos < old_pos
+
+    def test_diff_with_inactive_agent(self):
+        """render_diff should handle inactive agents in current period."""
+        inactive = _make_inactive_agent(id="idle", name="Idle")
+        active_prev = _make_agent_data(
+            id="idle", name="Idle",
+            messages=50, period_cost=5.0,
+            period_start="2024-12-01", period_end="2025-01-01",
+        )
+        prev = _make_stats(agents=[active_prev], total_period_cost=5.0)
+        cur = _make_stats(agents=[inactive], total_period_cost=0.0)
+
+        result = render_diff(cur, prev)
+
+        assert "Idle" in result
+        assert "-50" in result

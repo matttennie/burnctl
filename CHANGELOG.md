@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] - 2026-03-17
+
+### Added
+
+- API usage collector: auto-discovers providers (OpenRouter, HuggingFace, etc.) from `~/.config/orchard/usage.jsonl`
+- Each provider appears as its own agent in the report with per-model breakdown
+- `--no-activity` flag and `no_activity` config to hide the DAILY ACTIVITY section
+- N/A display for Pace and Value Ratio on pay-as-you-go providers
+- Provider-specific gradient colors (OpenRouter: dark gray, HuggingFace: amber)
+- Claude collector gap-fill: scans raw session JSONLs when stats-cache is stale
+
+### Changed
+
+- Bumped version to 0.2.0
+- Updated snapshot tests for new render output
+
 ## [0.1.0] - 2026-03-13
 
 ### Added

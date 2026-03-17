@@ -25,6 +25,13 @@ env/
 .DS_Store
 Thumbs.db
 
+# Tool caches
+.aider.tags.cache.v4/
+.repo-map
+
+# Claude Code
+CLAUDE.md
+
 # Testing / coverage
 .pytest_cache/
 htmlcov/

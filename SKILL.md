@@ -2,7 +2,7 @@
 
 ## What it does
 
-burnctl is a unified CLI tool that aggregates usage and cost data across multiple AI coding agents (Claude Code, Gemini CLI, OpenAI Codex CLI, Aider, Ollama) into a single terminal dashboard.
+burnctl is a unified CLI tool that aggregates usage and cost data across multiple AI coding agents (Claude Code, Gemini CLI, OpenAI Codex CLI, Aider, OpenRouter, HuggingFace, Ollama) into a single terminal dashboard.
 
 ## Quick reference
 
@@ -23,7 +23,7 @@ burnctl upgrade      # Open billing pages
 - `burnctl/config.py` — Persistent config at `~/.config/burnctl/config.json`
 - `burnctl/pricing.py` — Per-agent pricing tables
 - `burnctl/report.py` — Data aggregation and multi-column rendering
-- `burnctl/collectors/` — One module per agent (base.py, claude.py, gemini.py, codex.py, aider.py, local.py, stubs.py)
+- `burnctl/collectors/` — One module per agent (base.py, claude.py, gemini.py, codex.py, aider.py, api_usage.py, local.py, stubs.py)
 - `tests/` — pytest test suite
 
 ## Development

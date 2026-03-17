@@ -1,18 +1,22 @@
 """Claude Code usage collector.
 
 Reads ``~/.claude/stats-cache.json`` and delegates pricing lookups to
-the ``claude_usage`` package.
+the ``claude_usage`` package.  When the cache is stale (``lastComputedDate``
+is before today), raw session JSONL files are scanned to fill the gap.
 """
 
 import json
 import os
 import sys
-from datetime import timedelta
+from collections import defaultdict
+from datetime import datetime, timedelta
 
 from burnctl.collectors.base import BaseCollector
 from burnctl.config import PLAN_PRICES, ANNUAL_PRICES
 
-STATS_FILE = os.path.join(os.path.expanduser("~"), ".claude", "stats-cache.json")
+CLAUDE_DIR = os.path.join(os.path.expanduser("~"), ".claude")
+STATS_FILE = os.path.join(CLAUDE_DIR, "stats-cache.json")
+PROJECTS_DIR = os.path.join(CLAUDE_DIR, "projects")
 
 
 def _default_pricing():
@@ -48,17 +52,6 @@ class ClaudeCollector(BaseCollector):
         """Return *True* if the stats-cache file exists."""
         return os.path.isfile(STATS_FILE)
 
-    def _load_data(self):
-        """Load and return the raw stats-cache.json contents."""
-        if not os.path.isfile(STATS_FILE):
-            return None
-        try:
-            with open(STATS_FILE) as f:
-                return json.load(f)
-        except (json.JSONDecodeError, OSError) as exc:
-            print(f"Warning: could not read Claude stats: {exc}", file=sys.stderr)
-            return None
-
     @staticmethod
     def _fallback_pricing():
         """Hardcoded Claude pricing when claude_usage is not installed."""
@@ -92,6 +85,137 @@ class ClaudeCollector(BaseCollector):
 
         return pricing_table
 
+    # ── Live gap-fill from raw session JSONLs ──────────────────
+
+    @staticmethod
+    def _scan_sessions_after(cutoff_date, today_str):
+        """Scan raw session JSONL files for data after *cutoff_date*.
+
+        Returns (daily_activity, daily_model_tokens, model_usage_delta)
+        where each mirrors the corresponding ``stats-cache.json`` structure.
+        """
+        if not os.path.isdir(PROJECTS_DIR):
+            return [], [], {}
+
+        # Collect per-date aggregates
+        def _new_day():  # type: () -> dict
+            return {"messages": 0, "sessions": set(), "tool_calls": 0}
+
+        activity = defaultdict(_new_day)  # type: dict
+        model_tokens = defaultdict(lambda: defaultdict(int))  # type: dict
+        model_delta = defaultdict(lambda: defaultdict(int))  # type: dict
+
+        cutoff_epoch = datetime.strptime(cutoff_date, "%Y-%m-%d").timestamp()
+
+        for dirpath, _dirnames, filenames in os.walk(PROJECTS_DIR):
+            for fname in filenames:
+                if not fname.endswith(".jsonl"):
+                    continue
+                fpath = os.path.join(dirpath, fname)
+                try:
+                    # Skip files not modified since the cache was built
+                    if os.path.getmtime(fpath) < cutoff_epoch:
+                        continue
+                    with open(fpath) as fh:
+                        for line in fh:
+                            try:
+                                entry = json.loads(line)
+                            except json.JSONDecodeError:
+                                continue
+                            ts_raw = entry.get("timestamp")
+                            if isinstance(ts_raw, (int, float)):
+                                day = datetime.fromtimestamp(ts_raw / 1000).strftime("%Y-%m-%d")
+                            elif isinstance(ts_raw, str):
+                                day = ts_raw[:10]  # "YYYY-MM-DD" prefix
+                            else:
+                                continue
+                            if day <= cutoff_date or day > today_str:
+                                continue
+                            etype = entry.get("type", "")
+                            sid = entry.get("sessionId", "")
+                            if etype == "user":
+                                activity[day]["messages"] += 1
+                                activity[day]["sessions"].add(sid)
+                            elif etype == "assistant":
+                                msg = entry.get("message", {})
+                                usage = msg.get("usage", {})
+                                model = msg.get("model", "")
+                                out_tok = usage.get("output_tokens", 0)
+                                in_tok = usage.get("input_tokens", 0)
+                                cache_read = usage.get("cache_read_input_tokens", 0)
+                                cache_create_raw = usage.get("cache_creation_input_tokens", 0)
+                                cache_detail = usage.get("cache_creation", {})
+                                cache_create = cache_create_raw or sum(cache_detail.values())
+                                if model and out_tok:
+                                    model_tokens[day][model] += out_tok
+                                    model_delta[model]["outputTokens"] += out_tok
+                                    model_delta[model]["inputTokens"] += in_tok
+                                    model_delta[model]["cacheReadInputTokens"] += cache_read
+                                    model_delta[model]["cacheCreationInputTokens"] += cache_create
+                                # Count tool_use blocks
+                                for block in msg.get("content", []):
+                                    if isinstance(block, dict) and block.get("type") == "tool_use":
+                                        activity[day]["tool_calls"] += 1
+                                        activity[day]["sessions"].add(sid)
+                except (OSError, UnicodeDecodeError):
+                    continue
+
+        # Convert to cache-compatible structures
+        daily_act = []
+        for day in sorted(activity):
+            a = activity[day]
+            daily_act.append({
+                "date": day,
+                "messageCount": a["messages"],
+                "sessionCount": len(a["sessions"]),
+                "toolCallCount": a["tool_calls"],
+            })
+        daily_tok = []
+        for day in sorted(model_tokens):
+            daily_tok.append({
+                "date": day,
+                "tokensByModel": dict(model_tokens[day]),
+            })
+        return daily_act, daily_tok, dict(model_delta)
+
+    def _load_data(self):
+        """Load stats-cache.json and fill any gap with live session data."""
+        if not os.path.isfile(STATS_FILE):
+            return None
+        try:
+            with open(STATS_FILE) as f:
+                data = json.load(f)
+        except (json.JSONDecodeError, OSError) as exc:
+            print(f"Warning: could not read Claude stats: {exc}", file=sys.stderr)
+            return None
+
+        today_str = datetime.now().strftime("%Y-%m-%d")
+        last_computed = data.get("lastComputedDate", today_str)
+        if last_computed >= today_str:
+            return data
+
+        # Cache is stale — supplement with raw JSONL data
+        extra_act, extra_tok, model_delta = self._scan_sessions_after(last_computed, today_str)
+        if extra_act:
+            data.setdefault("dailyActivity", []).extend(extra_act)
+            extra_msgs = sum(a["messageCount"] for a in extra_act)
+            extra_sess = sum(a["sessionCount"] for a in extra_act)
+            data["totalMessages"] = data.get("totalMessages", 0) + extra_msgs
+            data["totalSessions"] = data.get("totalSessions", 0) + extra_sess
+        if extra_tok:
+            data.setdefault("dailyModelTokens", []).extend(extra_tok)
+        # Merge cumulative model usage deltas
+        model_usage = data.setdefault("modelUsage", {})
+        for model, delta in model_delta.items():
+            mu = model_usage.setdefault(model, {
+                "inputTokens": 0, "outputTokens": 0,
+                "cacheReadInputTokens": 0, "cacheCreationInputTokens": 0,
+            })
+            for key, val in delta.items():
+                mu[key] = mu.get(key, 0) + val
+
+        return data
+
     # ── Stats computation ────────────────────────────────────────
 
     def get_stats(self, start, end, ref_date):
@@ -122,11 +246,16 @@ class ClaudeCollector(BaseCollector):
 
         period_output_tokens = 0
         period_cost = 0.0
+        period_model_usage = {}  # type: dict
         for entry in daily_tokens:
             for model, out_tokens in entry.get("tokensByModel", {}).items():
                 period_output_tokens += out_tokens
                 model_pricing = pricing_table.get(model, _default_pricing())
                 period_cost += out_tokens * model_pricing["output"] / 1_000_000
+                bucket = period_model_usage.setdefault(
+                    model, {"outputTokens": 0},
+                )
+                bucket["outputTokens"] += out_tokens
 
         # All-time cost across every model
         alltime_cost = sum(
@@ -155,7 +284,7 @@ class ClaudeCollector(BaseCollector):
             "output_tokens": period_output_tokens,
             "period_cost": period_cost,
             "alltime_cost": alltime_cost,
-            "model_usage": data.get("modelUsage", {}),
+            "model_usage": period_model_usage,
             "daily_messages": daily_messages,
             "first_session": first_session,
             "total_messages": data.get("totalMessages", 0),
@@ -170,12 +299,36 @@ class ClaudeCollector(BaseCollector):
         return "https://claude.ai/settings/billing"
 
     def get_plan_info(self, config):
-        """Resolve Claude plan from config.
+        """Resolve Claude plan from env, config, or default.
 
-        Checks ``claude_plan`` first, then falls back to the generic
-        ``plan`` key, defaulting to ``"max5x"``.
+        Priority: ``CLAUDE_PLAN`` env var > explicit config >
+        default (``max5x`` with a stderr warning).
         """
-        plan = config.get("claude_plan", config.get("plan", "max5x"))
+        env_plan = os.environ.get("CLAUDE_PLAN", "").lower()
+        if env_plan and env_plan in PLAN_PRICES:
+            plan = env_plan
+        else:
+            plan = config.get("claude_plan", "max5x")
+
+        # Warn if using the default and the user never set it
+        if plan == "max5x" and not config.get("_claude_plan_set"):
+            cfg_file = os.path.join(
+                os.path.expanduser("~"), ".config", "burnctl", "config.json",
+            )
+            explicitly_set = False
+            try:
+                with open(cfg_file) as f:
+                    saved = json.load(f)
+                explicitly_set = "claude_plan" in saved
+            except (OSError, json.JSONDecodeError, TypeError):
+                pass
+            if not explicitly_set:
+                print(
+                    "Warning: Claude plan defaulting to 'max5x' ($100/mo). "
+                    "Set your plan: burnctl config claude_plan <plan>",
+                    file=sys.stderr,
+                )
+
         interval = config.get("billing_interval", "mo")
 
         if interval == "yr" and plan in ANNUAL_PRICES:

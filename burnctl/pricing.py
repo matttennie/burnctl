@@ -7,6 +7,8 @@ Each agent has its own pricing table (or delegates to an external package).
 # ── Gemini (per-million-token rates, USD) ────────────────────────
 
 GEMINI_PRICING = {
+    "gemini-3.1-pro-preview": {"input": 2.00, "output": 12.0, "cache_read": 0.20},
+    "gemini-3-flash-preview": {"input": 0.50, "output": 3.0, "cache_read": 0.05},
     "gemini-2.5-pro": {"input": 1.25, "output": 10.0, "cache_read": 0.31},
     "gemini-2.5-flash": {"input": 0.15, "output": 0.60, "cache_read": 0.04},
     "gemini-2.0-flash": {"input": 0.10, "output": 0.40, "cache_read": 0.025},
@@ -16,12 +18,14 @@ GEMINI_PRICING = {
 # ── OpenAI / Codex (per-million-token rates, USD) ───────────────
 
 OPENAI_PRICING = {
-    "gpt-5.3-codex": {"input": 2.50, "output": 10.0},
+    "gpt-5.4": {"input": 2.50, "output": 15.0, "cache_read": 0.25},
+    "gpt-5.4-pro": {"input": 30.0, "output": 180.0},
+    "gpt-5.3-codex": {"input": 2.50, "output": 15.0, "cache_read": 0.25},
+    "gpt-5.2-codex": {"input": 2.50, "output": 15.0, "cache_read": 0.25},
     "gpt-4o": {"input": 2.50, "output": 10.0},
     "gpt-4o-mini": {"input": 0.15, "output": 0.60},
     "o3": {"input": 10.0, "output": 40.0},
     "o3-mini": {"input": 1.10, "output": 4.40},
-    "o1": {"input": 15.0, "output": 60.0},
     "codex-mini": {"input": 1.50, "output": 6.0},
 }
 

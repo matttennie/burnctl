@@ -310,6 +310,7 @@ class TestMergeConfig:
             no_color=False,
             simple=False,
             compact=False,
+            no_activity=False,
         )
         defaults.update(overrides)
         return argparse.Namespace(**defaults)
@@ -712,6 +713,7 @@ class TestRenderReport:
             simple=False,
             use_color=True,
             theme="gradient",
+            no_activity=False,
         )
         assert result == "full report"
 
@@ -730,6 +732,7 @@ class TestRenderReport:
             simple=True,
             use_color=False,
             theme="classic",
+            no_activity=False,
         )
 
     def test_no_data_exits(self):
@@ -983,3 +986,576 @@ class TestWatchLoop:
 
         # Should have written the clear-screen sequence
         assert any("\033[2J\033[H" in w for w in writes)
+
+
+# ── --since / --until flags ──────────────────────────────────────────
+
+
+class TestSinceUntilFlags:
+    """Verify --since and --until parser flags."""
+
+    def _get_parser(self):
+        from burnctl.cli import _build_parser
+
+        return _build_parser()
+
+    def test_since_accepts_date(self):
+        parser = self._get_parser()
+        args = parser.parse_args(["--since", "2025-01-15"])
+        assert args.since == "2025-01-15"
+
+    def test_until_accepts_date(self):
+        parser = self._get_parser()
+        args = parser.parse_args(["--until", "2025-02-28"])
+        assert args.until == "2025-02-28"
+
+    def test_since_and_until_together(self):
+        parser = self._get_parser()
+        args = parser.parse_args(["--since", "2025-01-01", "--until", "2025-01-31"])
+        assert args.since == "2025-01-01"
+        assert args.until == "2025-01-31"
+
+    def test_since_without_until(self):
+        parser = self._get_parser()
+        args = parser.parse_args(["--since", "2025-03-01"])
+        assert args.since == "2025-03-01"
+        assert args.until is None
+
+    def test_since_default_is_none(self):
+        parser = self._get_parser()
+        args = parser.parse_args([])
+        assert args.since is None
+
+    def test_until_default_is_none(self):
+        parser = self._get_parser()
+        args = parser.parse_args([])
+        assert args.until is None
+
+    def test_since_in_billing_group(self):
+        parser = self._get_parser()
+        billing_group = None
+        for group in parser._action_groups:
+            if group.title == "billing":
+                billing_group = group
+                break
+        assert billing_group is not None
+        action_dests = [a.dest for a in billing_group._group_actions]
+        assert "since" in action_dests
+
+    def test_until_in_billing_group(self):
+        parser = self._get_parser()
+        billing_group = None
+        for group in parser._action_groups:
+            if group.title == "billing":
+                billing_group = group
+                break
+        assert billing_group is not None
+        action_dests = [a.dest for a in billing_group._group_actions]
+        assert "until" in action_dests
+
+    def test_since_combined_with_other_flags(self):
+        parser = self._get_parser()
+        args = parser.parse_args(["--since", "2025-06-01", "--json"])
+        assert args.since == "2025-06-01"
+        assert args.json is True
+
+    def test_until_combined_with_period(self):
+        parser = self._get_parser()
+        args = parser.parse_args(["--since", "2025-06-01", "--period", "current"])
+        assert args.since == "2025-06-01"
+        assert args.period == "current"
+
+
+# ── --since / --until in _render_report ──────────────────────────────
+
+
+class TestSinceUntilRender:
+    """Verify --since and --until are passed through to aggregate_stats."""
+
+    def _make_args(self, **overrides):
+        defaults = dict(
+            period="current",
+            export=None,
+            json=True,
+            accessible=False,
+            compact=False,
+            since=None,
+            until=None,
+        )
+        defaults.update(overrides)
+        return argparse.Namespace(**defaults)
+
+    def _make_agg(self):
+        return {
+            "agents": {"fake": {"messages": 10}},
+            "totals": {"messages": 10},
+        }
+
+    def test_since_passes_start_override(self):
+        from burnctl.cli import _render_report
+
+        args = self._make_args(since="2025-03-01")
+        config = {"no_color": False, "theme": "gradient", "simple": False, "compact": False}
+        collectors = [FakeCollector()]
+
+        with patch("burnctl.report.aggregate_stats", return_value=self._make_agg()) as mock_agg, \
+             patch("burnctl.report.render_json", return_value="{}"):
+            _render_report(args, config, collectors)
+        _, kwargs = mock_agg.call_args
+        assert kwargs["start_override"] is not None
+        assert kwargs["start_override"].year == 2025
+        assert kwargs["start_override"].month == 3
+        assert kwargs["start_override"].day == 1
+
+    def test_since_and_until_pass_both_overrides(self):
+        from burnctl.cli import _render_report
+
+        args = self._make_args(since="2025-01-10", until="2025-01-20")
+        config = {"no_color": False, "theme": "gradient", "simple": False, "compact": False}
+        collectors = [FakeCollector()]
+
+        with patch("burnctl.report.aggregate_stats", return_value=self._make_agg()) as mock_agg, \
+             patch("burnctl.report.render_json", return_value="{}"):
+            _render_report(args, config, collectors)
+        _, kwargs = mock_agg.call_args
+        assert kwargs["start_override"] is not None
+        assert kwargs["end_override"] is not None
+        assert kwargs["start_override"].day == 10
+        assert kwargs["end_override"].day == 20
+
+    def test_since_without_until_leaves_end_none(self):
+        from burnctl.cli import _render_report
+
+        args = self._make_args(since="2025-04-01")
+        config = {"no_color": False, "theme": "gradient", "simple": False, "compact": False}
+        collectors = [FakeCollector()]
+
+        with patch("burnctl.report.aggregate_stats", return_value=self._make_agg()) as mock_agg, \
+             patch("burnctl.report.render_json", return_value="{}"):
+            _render_report(args, config, collectors)
+        _, kwargs = mock_agg.call_args
+        assert kwargs["start_override"] is not None
+        assert kwargs["end_override"] is None
+
+    def test_since_invalid_date_exits(self):
+        from burnctl.cli import _render_report
+
+        args = self._make_args(since="not-a-date")
+        config = {"no_color": False, "theme": "gradient", "simple": False, "compact": False}
+        collectors = [FakeCollector()]
+
+        with pytest.raises(SystemExit) as exc_info:
+            _render_report(args, config, collectors)
+        assert exc_info.value.code == 1
+
+    def test_since_invalid_date_message(self, capsys):
+        from burnctl.cli import _render_report
+
+        args = self._make_args(since="bad")
+        config = {"no_color": False, "theme": "gradient", "simple": False, "compact": False}
+        collectors = [FakeCollector()]
+
+        with pytest.raises(SystemExit):
+            _render_report(args, config, collectors)
+        err = capsys.readouterr().err
+        assert "--since must be YYYY-MM-DD" in err
+
+    def test_until_invalid_date_exits(self):
+        from burnctl.cli import _render_report
+
+        args = self._make_args(since="2025-01-01", until="bad-date")
+        config = {"no_color": False, "theme": "gradient", "simple": False, "compact": False}
+        collectors = [FakeCollector()]
+
+        with pytest.raises(SystemExit) as exc_info:
+            _render_report(args, config, collectors)
+        assert exc_info.value.code == 1
+
+    def test_until_invalid_date_message(self, capsys):
+        from burnctl.cli import _render_report
+
+        args = self._make_args(since="2025-01-01", until="nope")
+        config = {"no_color": False, "theme": "gradient", "simple": False, "compact": False}
+        collectors = [FakeCollector()]
+
+        with pytest.raises(SystemExit):
+            _render_report(args, config, collectors)
+        err = capsys.readouterr().err
+        assert "--until must be YYYY-MM-DD" in err
+
+    def test_no_since_no_until_no_overrides(self):
+        from burnctl.cli import _render_report
+
+        args = self._make_args()
+        config = {"no_color": False, "theme": "gradient", "simple": False, "compact": False}
+        collectors = [FakeCollector()]
+
+        with patch("burnctl.report.aggregate_stats", return_value=self._make_agg()) as mock_agg, \
+             patch("burnctl.report.render_json", return_value="{}"):
+            _render_report(args, config, collectors)
+        _, kwargs = mock_agg.call_args
+        assert kwargs["start_override"] is None
+        assert kwargs["end_override"] is None
+
+
+# ── --period diff ────────────────────────────────────────────────────
+
+
+class TestPeriodDiff:
+    """Verify --period diff support in parser and rendering."""
+
+    def _get_parser(self):
+        from burnctl.cli import _build_parser
+
+        return _build_parser()
+
+    def test_parser_accepts_period_diff(self):
+        parser = self._get_parser()
+        args = parser.parse_args(["--period", "diff"])
+        assert args.period == "diff"
+
+    def test_period_choices_include_diff(self):
+        parser = self._get_parser()
+        # Find the --period action
+        period_action = None
+        for action in parser._actions:
+            if hasattr(action, "dest") and action.dest == "period":
+                period_action = action
+                break
+        assert period_action is not None
+        assert "diff" in period_action.choices
+
+    def test_period_choices_complete_set(self):
+        parser = self._get_parser()
+        period_action = None
+        for action in parser._actions:
+            if hasattr(action, "dest") and action.dest == "period":
+                period_action = action
+                break
+        assert period_action is not None
+        assert set(period_action.choices) == {"current", "last", "diff"}
+
+    def test_diff_calls_render_diff(self):
+        from burnctl.cli import _render_report
+
+        args = argparse.Namespace(
+            period="diff",
+            export=None,
+            json=False,
+            accessible=False,
+            compact=False,
+            since=None,
+            until=None,
+        )
+        config = {"no_color": False, "theme": "gradient", "simple": False, "compact": False}
+        collectors = [FakeCollector()]
+        agg = {"agents": {"fake": {"messages": 10}}, "totals": {"messages": 10}}
+
+        with patch("burnctl.report.aggregate_stats", return_value=agg), \
+             patch("burnctl.report.render_diff", return_value="diff output") as mock_diff:
+            result = _render_report(args, config, collectors)
+        mock_diff.assert_called_once()
+        assert result == "diff output"
+
+    def test_diff_calls_aggregate_stats_twice(self):
+        from burnctl.cli import _render_report
+
+        args = argparse.Namespace(
+            period="diff",
+            export=None,
+            json=False,
+            accessible=False,
+            compact=False,
+            since=None,
+            until=None,
+        )
+        config = {"no_color": False, "theme": "gradient", "simple": False, "compact": False}
+        collectors = [FakeCollector()]
+        agg = {"agents": {"fake": {"messages": 10}}, "totals": {"messages": 10}}
+
+        with patch("burnctl.report.aggregate_stats", return_value=agg) as mock_agg, \
+             patch("burnctl.report.render_diff", return_value="diff output"):
+            _render_report(args, config, collectors)
+        assert mock_agg.call_count == 2
+
+    def test_diff_uses_correct_offsets(self):
+        from burnctl.cli import _render_report
+
+        args = argparse.Namespace(
+            period="diff",
+            export=None,
+            json=False,
+            accessible=False,
+            compact=False,
+            since=None,
+            until=None,
+        )
+        config = {"no_color": False, "theme": "gradient", "simple": False, "compact": False}
+        collectors = [FakeCollector()]
+        agg = {"agents": {"fake": {"messages": 10}}, "totals": {"messages": 10}}
+
+        with patch("burnctl.report.aggregate_stats", return_value=agg) as mock_agg, \
+             patch("burnctl.report.render_diff", return_value="diff output"):
+            _render_report(args, config, collectors)
+        calls = mock_agg.call_args_list
+        # First call: current (offset=0)
+        assert calls[0][1]["offset"] == 0
+        # Second call: previous (offset=-1)
+        assert calls[1][1]["offset"] == -1
+
+    def test_diff_passes_both_aggs_to_render_diff(self):
+        from burnctl.cli import _render_report
+
+        args = argparse.Namespace(
+            period="diff",
+            export=None,
+            json=False,
+            accessible=False,
+            compact=False,
+            since=None,
+            until=None,
+        )
+        config = {"no_color": False, "theme": "gradient", "simple": False, "compact": False}
+        collectors = [FakeCollector()]
+        cur_agg = {"agents": {"fake": {"messages": 20}}, "totals": {"messages": 20}}
+        prev_agg = {"agents": {"fake": {"messages": 10}}, "totals": {"messages": 10}}
+
+        with patch("burnctl.report.aggregate_stats", side_effect=[cur_agg, prev_agg]), \
+             patch("burnctl.report.render_diff", return_value="diff output") as mock_diff:
+            _render_report(args, config, collectors)
+        mock_diff.assert_called_once_with(cur_agg, prev_agg)
+
+    def test_period_diff_via_short_flag(self):
+        parser = self._get_parser()
+        args = parser.parse_args(["-P", "diff"])
+        assert args.period == "diff"
+
+
+# ── Upgrade deep-link (no agent, no --all) ───────────────────────────
+
+
+class TestHandleUpgradeDeepLink:
+    """Verify _handle_upgrade finds the most over-pacing agent."""
+
+    def _make_agent_entry(self, agent_id, name, pace_pct, inactive=False):
+        entry = {
+            "id": agent_id,
+            "name": name,
+            "pace_pct": pace_pct,
+        }
+        if inactive:
+            entry["inactive"] = True
+        return entry
+
+    def test_specific_agent_still_works(self, capsys):
+        """Existing behavior: explicit agent arg opens that agent."""
+        from burnctl.cli import _handle_upgrade
+
+        c1 = FakeCollector(cid="alpha", name="Alpha Agent")
+        collector_map = {"alpha": c1}
+
+        with patch("burnctl.cli._COLLECTOR_MAP", collector_map), \
+             patch("webbrowser.open") as mock_open:
+            args = argparse.Namespace(agent="alpha", upgrade_all=False)
+            _handle_upgrade(args, [c1])
+        mock_open.assert_called_once_with("https://example.com/upgrade")
+
+    def test_all_flag_still_works(self, capsys):
+        """Existing behavior: --all opens all available agents."""
+        from burnctl.cli import _handle_upgrade
+
+        c1 = FakeCollector(cid="alpha", name="Alpha")
+        c2 = FakeCollector(cid="beta", name="Beta")
+
+        with patch("webbrowser.open") as mock_open:
+            args = argparse.Namespace(agent=None, upgrade_all=True)
+            _handle_upgrade(args, [c1, c2])
+        assert mock_open.call_count == 2
+
+    def test_no_agent_no_all_finds_most_over_pacing(self, capsys):
+        """No agent/no --all: opens the agent with highest pace_pct."""
+        from burnctl.cli import _handle_upgrade
+
+        c1 = FakeCollector(cid="alpha", name="Alpha Agent")
+        c2 = FakeCollector(cid="beta", name="Beta Agent")
+        collector_map = {"alpha": c1, "beta": c2}
+
+        agg = {
+            "agents": [
+                self._make_agent_entry("alpha", "Alpha Agent", 75.0),
+                self._make_agent_entry("beta", "Beta Agent", 120.0),
+            ],
+            "totals": {},
+        }
+        fake_config = {"billing_day": 10, "claude_plan": "pro"}
+
+        with patch("burnctl.cli._COLLECTOR_MAP", collector_map), \
+             patch("burnctl.config.load", return_value=fake_config), \
+             patch("burnctl.report.aggregate_stats", return_value=agg), \
+             patch("webbrowser.open") as mock_open:
+            args = argparse.Namespace(agent=None, upgrade_all=False)
+            _handle_upgrade(args, [c1, c2])
+
+        # Should open the most over-pacing agent (beta at 120%)
+        mock_open.assert_called_once_with("https://example.com/upgrade")
+        out = capsys.readouterr().out
+        assert "Beta Agent" in out
+        assert "120" in out
+
+    def test_no_agent_no_all_skips_inactive(self, capsys):
+        """Inactive agents should not be considered for the worst pacing."""
+        from burnctl.cli import _handle_upgrade
+
+        c1 = FakeCollector(cid="alpha", name="Alpha Agent")
+        c2 = FakeCollector(cid="beta", name="Beta Agent")
+        collector_map = {"alpha": c1, "beta": c2}
+
+        agg = {
+            "agents": [
+                self._make_agent_entry("alpha", "Alpha Agent", 50.0),
+                self._make_agent_entry("beta", "Beta Agent", 200.0, inactive=True),
+            ],
+            "totals": {},
+        }
+        fake_config = {"billing_day": 10, "claude_plan": "pro"}
+
+        with patch("burnctl.cli._COLLECTOR_MAP", collector_map), \
+             patch("burnctl.config.load", return_value=fake_config), \
+             patch("burnctl.report.aggregate_stats", return_value=agg), \
+             patch("webbrowser.open") as mock_open:
+            args = argparse.Namespace(agent=None, upgrade_all=False)
+            _handle_upgrade(args, [c1, c2])
+
+        mock_open.assert_called_once()
+        out = capsys.readouterr().out
+        assert "Alpha Agent" in out
+
+    def test_no_agent_no_all_no_available_exits(self):
+        """When no agents are available at all, exit with code 1."""
+        from burnctl.cli import _handle_upgrade
+
+        c1 = FakeCollector(cid="alpha", available=False)
+
+        with patch("webbrowser.open"):
+            args = argparse.Namespace(agent=None, upgrade_all=False)
+            with pytest.raises(SystemExit) as exc_info:
+                _handle_upgrade(args, [c1])
+            assert exc_info.value.code == 1
+
+    def test_no_agent_no_all_no_available_message(self, capsys):
+        """When no agents are available, prints error message."""
+        from burnctl.cli import _handle_upgrade
+
+        c1 = FakeCollector(cid="alpha", available=False)
+
+        with patch("webbrowser.open"):
+            args = argparse.Namespace(agent=None, upgrade_all=False)
+            with pytest.raises(SystemExit):
+                _handle_upgrade(args, [c1])
+        err = capsys.readouterr().err
+        assert "No agents available" in err
+
+    def test_no_agent_no_all_all_inactive_falls_back(self, capsys):
+        """When all active agents are inactive, falls back to opening all."""
+        from burnctl.cli import _handle_upgrade
+
+        c1 = FakeCollector(cid="alpha", name="Alpha Agent")
+        collector_map = {"alpha": c1}
+
+        agg = {
+            "agents": [
+                self._make_agent_entry("alpha", "Alpha Agent", 80.0, inactive=True),
+            ],
+            "totals": {},
+        }
+        fake_config = {"billing_day": 10, "claude_plan": "pro"}
+
+        with patch("burnctl.cli._COLLECTOR_MAP", collector_map), \
+             patch("burnctl.config.load", return_value=fake_config), \
+             patch("burnctl.report.aggregate_stats", return_value=agg), \
+             patch("webbrowser.open") as mock_open:
+            args = argparse.Namespace(agent=None, upgrade_all=False)
+            _handle_upgrade(args, [c1])
+
+        # Falls back to opening all available agents
+        mock_open.assert_called_once_with("https://example.com/upgrade")
+
+    def test_no_agent_no_all_prints_pace_pct(self, capsys):
+        """Output should include the pace percentage."""
+        from burnctl.cli import _handle_upgrade
+
+        c1 = FakeCollector(cid="alpha", name="Alpha Agent")
+        collector_map = {"alpha": c1}
+
+        agg = {
+            "agents": [
+                self._make_agent_entry("alpha", "Alpha Agent", 95.3),
+            ],
+            "totals": {},
+        }
+        fake_config = {"billing_day": 10, "claude_plan": "pro"}
+
+        with patch("burnctl.cli._COLLECTOR_MAP", collector_map), \
+             patch("burnctl.config.load", return_value=fake_config), \
+             patch("burnctl.report.aggregate_stats", return_value=agg), \
+             patch("webbrowser.open"):
+            args = argparse.Namespace(agent=None, upgrade_all=False)
+            _handle_upgrade(args, [c1])
+
+        out = capsys.readouterr().out
+        assert "95" in out
+        assert "pacing" in out.lower() or "%" in out
+
+    def test_no_agent_no_all_calls_aggregate_stats(self):
+        """Should call aggregate_stats to compute pacing."""
+        from burnctl.cli import _handle_upgrade
+
+        c1 = FakeCollector(cid="alpha", name="Alpha Agent")
+        collector_map = {"alpha": c1}
+
+        agg = {
+            "agents": [
+                self._make_agent_entry("alpha", "Alpha Agent", 50.0),
+            ],
+            "totals": {},
+        }
+        fake_config = {"billing_day": 10, "claude_plan": "pro"}
+
+        with patch("burnctl.cli._COLLECTOR_MAP", collector_map), \
+             patch("burnctl.config.load", return_value=fake_config), \
+             patch("burnctl.report.aggregate_stats", return_value=agg) as mock_agg, \
+             patch("webbrowser.open"):
+            args = argparse.Namespace(agent=None, upgrade_all=False)
+            _handle_upgrade(args, [c1])
+
+        mock_agg.assert_called_once()
+
+    def test_no_agent_no_all_worst_agent_no_url_falls_back(self, capsys):
+        """When worst agent has no upgrade URL, falls back to opening all."""
+        from burnctl.cli import _handle_upgrade
+
+        c1 = FakeCollector(cid="alpha", name="Alpha Agent")
+        c1.get_upgrade_url = lambda: ""
+        c2 = FakeCollector(cid="beta", name="Beta Agent")
+        collector_map = {"alpha": c1, "beta": c2}
+
+        agg = {
+            "agents": [
+                self._make_agent_entry("alpha", "Alpha Agent", 150.0),
+                self._make_agent_entry("beta", "Beta Agent", 50.0),
+            ],
+            "totals": {},
+        }
+        fake_config = {"billing_day": 10, "claude_plan": "pro"}
+
+        with patch("burnctl.cli._COLLECTOR_MAP", collector_map), \
+             patch("burnctl.config.load", return_value=fake_config), \
+             patch("burnctl.report.aggregate_stats", return_value=agg), \
+             patch("webbrowser.open") as mock_open:
+            args = argparse.Namespace(agent=None, upgrade_all=False)
+            _handle_upgrade(args, [c1, c2])
+
+        # Alpha has no URL so falls through; should open beta as fallback
+        mock_open.assert_called_once_with("https://example.com/upgrade")
+        out = capsys.readouterr().out
+        assert "Beta Agent" in out

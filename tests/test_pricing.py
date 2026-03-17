@@ -159,12 +159,14 @@ class TestOpenaiPricingStructure:
 
     def test_expected_models_present(self):
         expected_models = {
+            "gpt-5.4",
+            "gpt-5.4-pro",
             "gpt-5.3-codex",
+            "gpt-5.2-codex",
             "gpt-4o",
             "gpt-4o-mini",
             "o3",
             "o3-mini",
-            "o1",
             "codex-mini",
         }
         assert expected_models.issubset(set(OPENAI_PRICING.keys()))
@@ -182,14 +184,14 @@ class TestOpenaiPricingStructure:
                 assert rates[key] > 0, \
                     "{}.{} should be positive".format(model, key)
 
-    def test_o1_is_most_expensive(self):
-        """o1 should have the highest input rate among listed models."""
-        o1_input = OPENAI_PRICING["o1"]["input"]
+    def test_pro_is_most_expensive(self):
+        """gpt-5.4-pro should have the highest input rate."""
+        pro_input = OPENAI_PRICING["gpt-5.4-pro"]["input"]
         for model, rates in OPENAI_PRICING.items():
-            if model == "o1":
+            if model == "gpt-5.4-pro":
                 continue
-            assert o1_input >= rates["input"], \
-                "o1 input should be >= {} input".format(model)
+            assert pro_input >= rates["input"], \
+                "gpt-5.4-pro input should be >= {} input".format(model)
 
 
 # ---------------------------------------------------------------------------

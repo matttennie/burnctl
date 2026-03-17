@@ -107,9 +107,10 @@ class GeminiCollector(BaseCollector):
                     inp = tokens.get("input", 0)
                     out = tokens.get("output", 0)
                     cached = tokens.get("cached", 0)
+                    non_cached = max(inp - cached, 0)
 
                     cost = (
-                        inp * model_price.get("input", 0.15) / 1_000_000
+                        non_cached * model_price.get("input", 0.15) / 1_000_000
                         + out * model_price.get("output", 0.60) / 1_000_000
                         + cached * model_price.get("cache_read", 0.04) / 1_000_000
                     )
@@ -171,9 +172,12 @@ class GeminiCollector(BaseCollector):
         return "https://aistudio.google.com/app/plan_management"
 
     def get_plan_info(self, config):
+        from burnctl.config import GEMINI_PLAN_PRICES
+        plan = config.get("gemini_plan", "none")
+        price = GEMINI_PLAN_PRICES.get(plan, 0)
         return {
-            "plan_name": "pay-as-you-go",
-            "plan_price": 0,
+            "plan_name": plan,
+            "plan_price": price,
             "billing_day": config.get("billing_day", 1),
             "interval": "mo",
         }

@@ -19,6 +19,7 @@ from burnctl.collectors.claude import ClaudeCollector
 from burnctl.collectors.gemini import GeminiCollector
 from burnctl.collectors.codex import CodexCollector
 from burnctl.collectors.aider import AiderCollector
+from burnctl.collectors.api_usage import ApiUsageCollector
 from burnctl.report import (
     aggregate_stats,
     render_json,
@@ -129,11 +130,10 @@ class TestClaudeIntegration:
         # All-time cost > 0 (computed from full modelUsage)
         assert stats["alltime_cost"] > 0
 
-        # Model usage should have all 3 models
-        assert len(stats["model_usage"]) == 3
-        assert "claude-opus-4-5" in stats["model_usage"]
-        assert "claude-sonnet-4-5" in stats["model_usage"]
+        # Model usage is period-scoped (only models in dailyModelTokens)
+        assert len(stats["model_usage"]) == 1
         assert "claude-opus-4-6" in stats["model_usage"]
+        assert stats["model_usage"]["claude-opus-4-6"]["outputTokens"] == 185081
 
         # Spark data: one entry per elapsed day (days 0..3 inclusive)
         days_elapsed = min(
@@ -588,7 +588,199 @@ Tokens: 500 sent, 200 received. Cost: $0.01
         assert stats is None
 
 
-# ── 5. Full pipeline integration test ────────────────────────────────
+# ── 5. API usage collector with realistic usage.jsonl ───────────────────
+
+
+class TestApiUsageIntegration:
+    """Full pipeline test for the API usage collector."""
+
+    @staticmethod
+    def _make_entry(
+        ts, provider="openrouter", model_id="anthropic/claude-opus-4-6",
+        model_name="Claude Opus 4.6", input_tokens=1000, output_tokens=500,
+        cost=0.01, node_id="node-1", estimated=False,
+    ):
+        return json.dumps({
+            "ts": ts,
+            "provider": provider,
+            "model_id": model_id,
+            "model_name": model_name,
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "cost": cost,
+            "node_id": node_id,
+            "estimated": estimated,
+        })
+
+    def _write_fixture(self, tmp_path):
+        """Write a realistic usage.jsonl with in-period and out-of-period entries."""
+        lines = [
+            # In-period: 2026-03-11
+            self._make_entry(
+                "2026-03-11T10:00:00Z", provider="openrouter",
+                model_id="anthropic/claude-opus-4-6", model_name="Claude Opus 4.6",
+                input_tokens=1500, output_tokens=800, cost=0.024,
+                node_id="node-abc",
+            ),
+            # In-period: 2026-03-11, different model & node
+            self._make_entry(
+                "2026-03-11T14:00:00Z", provider="huggingface",
+                model_id="meta/llama-3-70b", model_name="Llama 3 70B",
+                input_tokens=2000, output_tokens=1200, cost=0.005,
+                node_id="node-def",
+            ),
+            # In-period: 2026-03-12
+            self._make_entry(
+                "2026-03-12T09:00:00Z", provider="openrouter",
+                model_id="anthropic/claude-opus-4-6", model_name="Claude Opus 4.6",
+                input_tokens=1000, output_tokens=600, cost=0.018,
+                node_id="node-abc", estimated=True,
+            ),
+            # Out-of-period: 2025-06-15
+            self._make_entry(
+                "2025-06-15T10:00:00Z", provider="openrouter",
+                model_id="anthropic/claude-opus-4-6", model_name="Claude Opus 4.6",
+                input_tokens=500, output_tokens=300, cost=0.008,
+                node_id="node-old",
+            ),
+        ]
+        usage_file = tmp_path / "usage.jsonl"
+        usage_file.write_text("\n".join(lines) + "\n")
+        return str(usage_file)
+
+    def test_full_parse(self, tmp_path):
+        fpath = self._write_fixture(tmp_path)
+
+        start = datetime(2026, 3, 10)
+        end = datetime(2026, 4, 10)
+        ref_date = datetime(2026, 3, 13)
+
+        collector = ApiUsageCollector("openrouter", "OpenRouter", usage_file=fpath)
+        stats = collector.get_stats(start, end, ref_date)
+
+        assert stats is not None
+
+        # Period messages: 2 in-period openrouter entries (huggingface excluded)
+        assert stats["messages"] == 2
+
+        # Sessions: 1 distinct node_id in period for openrouter (node-abc)
+        assert stats["sessions"] == 1
+
+        # Output tokens: 800 + 600 = 1400 (openrouter only)
+        assert stats["output_tokens"] == 1400
+
+        # Period cost: 0.024 + 0.018 = 0.042 (openrouter only)
+        assert stats["period_cost"] == pytest.approx(0.042)
+
+        # All-time cost: 0.024 + 0.018 + 0.008 = 0.050 (openrouter only)
+        assert stats["alltime_cost"] == pytest.approx(0.050)
+
+        # Model usage keyed by model_name: only openrouter models in period
+        assert "Claude Opus 4.6" in stats["model_usage"]
+        assert len(stats["model_usage"]) == 1
+
+        opus = stats["model_usage"]["Claude Opus 4.6"]
+        assert opus["inputTokens"] == 1500 + 1000
+        assert opus["outputTokens"] == 800 + 600
+
+        # Daily messages (openrouter only)
+        assert stats["daily_messages"]["2026-03-11"] == 1
+        assert stats["daily_messages"]["2026-03-12"] == 1
+
+        # First session: earliest openrouter entry across all time
+        assert stats["first_session"] == "2025-06-15"
+
+        # Totals (openrouter only)
+        assert stats["total_messages"] == 3
+        assert stats["total_sessions"] == 2  # node-abc, node-old
+
+        # Spark data length
+        days_elapsed = min(
+            (ref_date - start).days,
+            (end - start).days,
+        )
+        assert len(stats["spark_data"]) == days_elapsed + 1
+
+    def test_period_vs_alltime(self, tmp_path):
+        """alltime_cost includes out-of-period entry."""
+        fpath = self._write_fixture(tmp_path)
+
+        collector = ApiUsageCollector("openrouter", "OpenRouter", usage_file=fpath)
+        stats = collector.get_stats(
+            datetime(2026, 3, 10),
+            datetime(2026, 4, 10),
+            datetime(2026, 3, 13),
+        )
+
+        assert stats["alltime_cost"] > stats["period_cost"]
+
+    def test_provider_filtering(self, tmp_path):
+        """A collector only counts entries matching its provider_id."""
+        lines = [
+            self._make_entry(
+                "2026-03-11T10:00:00Z", provider="openrouter",
+                model_id="model-a", model_name="Model A", cost=0.01,
+            ),
+            self._make_entry(
+                "2026-03-11T11:00:00Z", provider="huggingface",
+                model_id="model-b", model_name="Model B", cost=0.02,
+            ),
+            self._make_entry(
+                "2026-03-11T12:00:00Z", provider="openrouter",
+                model_id="model-c", model_name="Model C", cost=0.03,
+            ),
+        ]
+        usage_file = tmp_path / "usage.jsonl"
+        usage_file.write_text("\n".join(lines) + "\n")
+
+        collector = ApiUsageCollector(
+            "openrouter", "OpenRouter", usage_file=str(usage_file),
+        )
+        stats = collector.get_stats(
+            datetime(2026, 3, 10),
+            datetime(2026, 4, 10),
+            datetime(2026, 3, 13),
+        )
+
+        assert stats is not None
+        # Only the 2 openrouter entries are counted
+        assert stats["messages"] == 2
+        assert stats["period_cost"] == pytest.approx(0.04)
+        # huggingface entry excluded
+        assert "Model B" not in stats["model_usage"]
+
+    def test_malformed_lines_skipped(self, tmp_path):
+        """Malformed JSON lines are skipped; valid entries still counted."""
+        valid_entry = self._make_entry(
+            "2026-03-11T10:00:00Z", cost=0.05,
+        )
+        lines = [
+            valid_entry,
+            "{invalid json",
+            "",
+            "not json at all",
+            '{"ts": "2026-03-11T11:00:00Z"}',  # missing provider & model_id
+            self._make_entry("2026-03-12T10:00:00Z", cost=0.03),
+        ]
+        usage_file = tmp_path / "usage.jsonl"
+        usage_file.write_text("\n".join(lines) + "\n")
+
+        collector = ApiUsageCollector(
+            "openrouter", "OpenRouter", usage_file=str(usage_file),
+        )
+        stats = collector.get_stats(
+            datetime(2026, 3, 10),
+            datetime(2026, 4, 10),
+            datetime(2026, 3, 13),
+        )
+
+        assert stats is not None
+        # Only 2 valid entries
+        assert stats["messages"] == 2
+        assert stats["period_cost"] == pytest.approx(0.08)
+
+
+# ── 6. Full pipeline integration test ────────────────────────────────
 
 
 class _FakeCollector:
@@ -725,6 +917,27 @@ class TestFullPipeline:
         assert "Agent A" in raw
         assert "Agent B" in raw
 
+    def test_aggregate_with_api_usage_collector(self):
+        """API usage collector integrates with the multi-agent pipeline."""
+        collectors = [
+            _FakeCollector("claude", "Claude Code", _make_fake_stats()),
+            _FakeCollector(
+                "openrouter", "OpenRouter",
+                _make_fake_stats(
+                    messages=50, sessions=3, output_tokens=10000,
+                    period_cost=1.50, alltime_cost=25.0,
+                ),
+            ),
+        ]
+        config = {"billing_day": 10}
+        result = aggregate_stats(
+            collectors, config, ref_date=datetime(2026, 3, 13),
+        )
+
+        assert len(result["agents"]) == 2
+        assert result["agents"][1]["id"] == "openrouter"
+        assert result["total_period_cost"] == pytest.approx(14.0)
+
     def test_render_full_with_color(self):
         result = self._get_aggregate()
         output = render_full(result, use_color=True)
@@ -759,7 +972,7 @@ class TestFullPipeline:
         assert expected_cols == set(reader.fieldnames)
 
 
-# ── 6. Edge cases ────────────────────────────────────────────────────
+# ── 7. Edge cases ────────────────────────────────────────────────────
 
 
 class TestEdgeCases:
@@ -847,8 +1060,8 @@ class TestEdgeCases:
         assert stats["sessions"] == 0
         assert stats["output_tokens"] == 0
 
-    def test_collector_returning_none_skipped(self):
-        """aggregate_stats skips collectors that return None."""
+    def test_collector_returning_none_shown_inactive(self):
+        """Available collector returning None appears as inactive."""
         none_collector = _FakeCollector("none_agent", "None Agent", None)
         real_collector = _FakeCollector(
             "real", "Real Agent", _make_fake_stats(),
@@ -860,9 +1073,12 @@ class TestEdgeCases:
             ref_date=datetime(2026, 3, 13),
         )
 
-        # Only the real collector should appear
-        assert len(result["agents"]) == 1
-        assert result["agents"][0]["id"] == "real"
+        # Both appear: one inactive, one active
+        assert len(result["agents"]) == 2
+        assert result["agents"][0]["id"] == "none_agent"
+        assert result["agents"][0].get("inactive") is True
+        assert result["agents"][1]["id"] == "real"
+        assert result["agents"][1].get("inactive") is not True
 
     def test_gemini_empty_model_name(self, tmp_path):
         """A gemini message with empty-string model should not crash."""
@@ -939,6 +1155,63 @@ class TestEdgeCases:
 
         assert "Solo Agent" in output
         assert "Total" not in output
+
+    def test_api_usage_empty_file(self, tmp_path):
+        """Empty usage.jsonl returns None."""
+        usage_file = tmp_path / "usage.jsonl"
+        usage_file.write_text("")
+
+        collector = ApiUsageCollector(
+            "openrouter", "OpenRouter", usage_file=str(usage_file),
+        )
+        stats = collector.get_stats(
+            datetime(2026, 3, 10),
+            datetime(2026, 4, 10),
+            datetime(2026, 3, 13),
+        )
+        assert stats is None
+
+    def test_api_usage_all_outside_period(self, tmp_path):
+        """All entries outside billing period: 0 period messages, non-zero alltime."""
+        lines = [
+            json.dumps({
+                "ts": "2025-01-15T10:00:00Z",
+                "provider": "openrouter",
+                "model_id": "anthropic/claude-opus-4-6",
+                "input_tokens": 1000,
+                "output_tokens": 500,
+                "cost": 0.02,
+                "node_id": "n1",
+            }),
+            json.dumps({
+                "ts": "2025-06-20T10:00:00Z",
+                "provider": "openrouter",
+                "model_id": "anthropic/claude-opus-4-6",
+                "input_tokens": 800,
+                "output_tokens": 400,
+                "cost": 0.015,
+                "node_id": "n2",
+            }),
+        ]
+        usage_file = tmp_path / "usage.jsonl"
+        usage_file.write_text("\n".join(lines) + "\n")
+
+        collector = ApiUsageCollector(
+            "openrouter", "OpenRouter", usage_file=str(usage_file),
+        )
+        stats = collector.get_stats(
+            datetime(2026, 3, 10),
+            datetime(2026, 4, 10),
+            datetime(2026, 3, 13),
+        )
+
+        assert stats is not None
+        assert stats["messages"] == 0
+        assert stats["sessions"] == 0
+        assert stats["period_cost"] == pytest.approx(0.0)
+        assert stats["alltime_cost"] == pytest.approx(0.035)
+        assert stats["total_messages"] == 2
+        assert stats["total_sessions"] == 2
 
     def test_render_accessible_no_agents(self):
         """Accessible render with no data returns a clear message."""

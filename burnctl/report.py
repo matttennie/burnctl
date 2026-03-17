@@ -11,12 +11,78 @@ import math
 import os
 import re
 import sys
-from datetime import datetime, timedelta
+from datetime import datetime
+
+
+# ── Color helpers ──────────────────────────────────────────────────
+
+_ANSI_RE = re.compile(r'\033\[[0-9;]*m')
+_R = "\033[0m"
+_BD = "\033[1m"
+_DM = "\033[2m"
+
+
+def _rgb(r, g, b):
+    return f"\033[38;2;{r};{g};{b}m"
+
+
+def _lerp(c1, c2, t):
+    return tuple(int(a + (b - a) * t) for a, b in zip(c1, c2))
+
+
+# ── Agent color palettes ──────────────────────────────────────────
+
+# Claude: warm terracotta gradient (unchanged)
+_CLAUDE_GRAD = [
+    (193, 95, 60), (206, 107, 73), (218, 119, 86),
+    (222, 115, 86), (232, 140, 105), (244, 180, 148),
+]
+# Gemini: blue → purple → soft lavender
+_GEMINI_GRAD = [
+    (66, 133, 244), (120, 93, 239), (147, 51, 234),
+    (172, 102, 243), (211, 227, 253),
+]
+# Codex: white → dark gray
+_CODEX_GRAD = [
+    (240, 240, 240), (200, 200, 200), (160, 160, 160),
+    (120, 120, 120), (80, 80, 80),
+]
+# OpenRouter: dark gray gradient
+_OPENROUTER_GRAD = [
+    (180, 180, 180), (150, 150, 150), (120, 120, 120),
+    (90, 90, 90), (60, 60, 60),
+]
+# HuggingFace: yellow/amber gradient
+_HUGGINGFACE_GRAD = [
+    (255, 213, 79), (255, 183, 77), (255, 152, 0),
+    (245, 124, 0), (230, 81, 0),
+]
+# Default / unknown agent
+_DEFAULT_GRAD = [
+    (160, 180, 200), (130, 155, 180), (100, 130, 160),
+]
+# Border & section titles
+_BORDER_GRAD = [(100, 115, 135), (25, 30, 40)]  # light → very dark, left to right
+_TITLE_COLOR = (120, 140, 165)
+
+_AGENT_GRADIENTS = {
+    "claude": _CLAUDE_GRAD,
+    "gemini": _GEMINI_GRAD,
+    "codex": _CODEX_GRAD,
+    "openrouter": _OPENROUTER_GRAD,
+    "huggingface": _HUGGINGFACE_GRAD,
+}
+
+
+def _agent_gradient(agent_id):
+    """Return the gradient palette for a given agent id."""
+    for key, grad in _AGENT_GRADIENTS.items():
+        if key in agent_id.lower():
+            return grad
+    return _DEFAULT_GRAD
 
 
 # ── Fallback theme (when claude_usage is not installed) ────────────
-
-_ANSI_RE = re.compile(r'\033\[[0-9;]*m')
 
 
 class _FallbackTheme:
@@ -85,6 +151,143 @@ class _FallbackTheme:
         return f"\033[36m{f_str}\033[2m{e_str}\033[0m"
 
 
+class _MultiAgentTheme:
+    """Wraps a base theme and adds per-agent colors + custom border/title."""
+
+    def __init__(self, base):
+        self._base = base
+
+    @property
+    def enabled(self):
+        return self._base.enabled
+
+    # ── Delegate unchanged methods ──
+    def muted(self, text):
+        return self._base.muted(text)
+
+    def bold(self, text):
+        return self._base.bold(text)
+
+    def highlight(self, text):
+        return self._base.highlight(text)
+
+    def warm(self, text):
+        return self._base.warm(text)
+
+    def stat_icon_color(self, index):
+        return self._base.stat_icon_color(index)
+
+    def value_bar(self, paid_w, value_w):
+        return self._base.value_bar(paid_w, value_w)
+
+    # ── Overridden: border & title ──
+    def border(self, ch):
+        if not self.enabled:
+            return str(ch)
+        return f"{_rgb(*_BORDER_GRAD[0])}{ch}{_R}"
+
+    def border_right(self, ch):
+        if not self.enabled:
+            return str(ch)
+        return f"{_rgb(*_BORDER_GRAD[-1])}{ch}{_R}"
+
+    def border_line(self, text):
+        if not self.enabled:
+            return str(text)
+        grad = _BORDER_GRAD
+        n = max(len(text) - 1, 1)
+        parts = []
+        for i, ch in enumerate(text):
+            t = i / n
+            r, g, b = _lerp(grad[0], grad[1], t)
+            parts.append(f"{_rgb(r, g, b)}{ch}")
+        parts.append(_R)
+        return "".join(parts)
+
+    def title(self, text):
+        if not self.enabled:
+            return str(text)
+        return f"{_BD}{_rgb(*_TITLE_COLOR)}{text}{_R}"
+
+    def success(self, text):
+        if not self.enabled:
+            return str(text)
+        return f"{_rgb(*_TITLE_COLOR)}{text}{_R}"
+
+    def accent(self, text):
+        if not self.enabled:
+            return str(text)
+        return f"{_rgb(*_BORDER_GRAD[0])}{text}{_R}"
+
+    # ── Agent-aware methods ──
+    def agent_name(self, text, agent_id):
+        """Color agent name — gradient for Gemini, solid primary for others."""
+        if not self.enabled:
+            return str(text)
+        grad = _agent_gradient(agent_id)
+        # Only Gemini gets the text gradient
+        if "gemini" in agent_id.lower() and len(grad) >= 2:
+            n = max(len(text) - 1, 1)
+            segs = len(grad) - 1
+            parts = []
+            for i, ch in enumerate(text):
+                t = i / n
+                seg = min(int(t * segs), segs - 1)
+                local_t = (t * segs) - seg
+                r, g, b = _lerp(grad[seg], grad[seg + 1], local_t)
+                parts.append(f"{_BD}{_rgb(r, g, b)}{ch}")
+            parts.append(_R)
+            return "".join(parts)
+        return f"{_BD}{_rgb(*grad[0])}{text}{_R}"
+
+    def agent_bar(self, text, agent_id):
+        """Color text using the agent's primary gradient color."""
+        if not self.enabled:
+            return str(text)
+        grad = _agent_gradient(agent_id)
+        return f"{_rgb(*grad[0])}{text}{_R}"
+
+    def agent_model_bar(self, filled, empty, model_name, agent_id):
+        """Model breakdown bar colored by agent palette."""
+        f_str = "\u2593" * filled
+        e_str = "\u2591" * empty
+        if not self.enabled:
+            return f_str + e_str
+        grad = _agent_gradient(agent_id)
+        # Pick color by model role within the agent's palette
+        if any(k in model_name for k in ("opus", "pro", "5.3")):
+            color = grad[0]
+        elif any(k in model_name for k in ("sonnet", "flash")):
+            mid = len(grad) // 2
+            color = grad[mid]
+        else:
+            color = grad[-1]
+        return f"{_rgb(*color)}{f_str}{_DM}{e_str}{_R}"
+
+    def agent_progress_bar(self, filled, empty, width, agent_id):
+        """Gradient progress bar in agent colors."""
+        if not self.enabled:
+            return "\u2588" * filled + "\u2591" * empty
+        grad = _agent_gradient(agent_id)
+        parts = []
+        for i in range(filled):
+            t = i / max(width - 1, 1)
+            seg = min(int(t * (len(grad) - 1)), len(grad) - 2)
+            local_t = (t * (len(grad) - 1)) - seg
+            r, g, b = _lerp(grad[seg], grad[seg + 1], local_t)
+            parts.append(f"{_rgb(r, g, b)}\u2588")
+        empty_str = "\u2591" * empty
+        parts.append(f"{_DM}{empty_str}{_R}")
+        return "".join(parts)
+
+    # Keep base methods accessible for non-agent contexts
+    def progress_bar(self, filled, empty, width):
+        return self._base.progress_bar(filled, empty, width)
+
+    def model_bar(self, filled, empty, model_name):
+        return self._base.model_bar(filled, empty, model_name)
+
+
 # ── Period calculation ──────────────────────────────────────────────
 
 
@@ -148,7 +351,10 @@ def compute_period(billing_day, offset=0):
 # ── Data aggregation ────────────────────────────────────────────────
 
 
-def aggregate_stats(collectors, config, ref_date=None, offset=0):
+def aggregate_stats(
+    collectors, config, ref_date=None, offset=0,
+    start_override=None, end_override=None,
+):
     """Orchestrate data collection from all *collectors*.
 
     Parameters
@@ -161,6 +367,9 @@ def aggregate_stats(collectors, config, ref_date=None, offset=0):
         Override "today" for testing. ``None`` means ``datetime.now()``.
     offset : int
         Period offset (``0`` = current, ``-1`` = previous).
+    start_override, end_override : datetime | None
+        Explicit date range (from ``--since`` / ``--until``).
+        When set, *offset* is ignored.
 
     Returns
     -------
@@ -181,9 +390,48 @@ def aggregate_stats(collectors, config, ref_date=None, offset=0):
         plan_price = plan_info["plan_price"]
         interval = plan_info["interval"]
 
-        start, end, today_dt = compute_period(billing_day, offset)
+        if start_override is not None:
+            start = start_override
+            end = end_override or ref_date
+            today_dt = ref_date
+        else:
+            start, end, today_dt = compute_period(billing_day, offset)
         stats = collector.get_stats(start, end, ref_date)
         if stats is None:
+            if collector.is_available():
+                # Agent detected but no activity in this period
+                total_days = (end - start).days
+                days_elapsed = min(
+                    (ref_date - start).days, total_days,
+                )
+                agents.append({
+                    "id": collector.id,
+                    "name": collector.name,
+                    "plan_name": plan_name,
+                    "plan_price": plan_price,
+                    "interval": interval,
+                    "period_start": start.strftime("%Y-%m-%d"),
+                    "period_end": end.strftime("%Y-%m-%d"),
+                    "days_elapsed": days_elapsed,
+                    "days_remaining": total_days - days_elapsed,
+                    "total_days": total_days,
+                    "pace_pct": 0.0,
+                    "projected_cost": 0.0,
+                    "messages": 0,
+                    "sessions": 0,
+                    "output_tokens": 0,
+                    "tool_calls": 0,
+                    "period_cost": 0.0,
+                    "alltime_cost": 0.0,
+                    "value_ratio": 0.0,
+                    "model_usage": {},
+                    "daily_messages": {},
+                    "spark_data": [],
+                    "first_session": "",
+                    "total_messages": 0,
+                    "total_sessions": 0,
+                    "inactive": True,
+                })
             continue
 
         total_days = (end - start).days
@@ -292,7 +540,8 @@ def _strip_ansi(text):
 # ── Full multi-column renderer ──────────────────────────────────────
 
 
-def render_full(stats, simple=False, use_color=True, theme="gradient"):
+def render_full(stats, simple=False, use_color=True, theme="gradient",
+                no_activity=False):
     """Multi-column box report.
 
     Parameters
@@ -308,9 +557,10 @@ def render_full(stats, simple=False, use_color=True, theme="gradient"):
     """
     try:
         from claude_usage.colors import get_theme
-        th = get_theme(theme, use_color=use_color)
+        base_th = get_theme(theme, use_color=use_color)
     except ImportError:
-        th = _FallbackTheme(use_color)
+        base_th = _FallbackTheme(use_color)
+    th = _MultiAgentTheme(base_th)
 
     agents = stats["agents"]
     if not agents:
@@ -361,7 +611,7 @@ def render_full(stats, simple=False, use_color=True, theme="gradient"):
     def box_title(title):
         pad = box_w - 4 - len(title)
         lv = th.border("\u2551")
-        rv = th.border("\u2551")
+        rv = th.border_right("\u2551")
         return f"{lv} {th.title(title)}{' ' * max(0, pad)} {rv}"
 
     def box_line(content="", raw_len=0):
@@ -369,7 +619,7 @@ def render_full(stats, simple=False, use_color=True, theme="gradient"):
             raw_len = len(_strip_ansi(content))
         pad = box_w - 4 - raw_len
         lv = th.border("\u2551")
-        rv = th.border("\u2551")
+        rv = th.border_right("\u2551")
         return f"{lv} {content}{' ' * max(0, pad)} {rv}"
 
     def box_empty():
@@ -409,10 +659,22 @@ def render_full(stats, simple=False, use_color=True, theme="gradient"):
     def _header_row():
         """Agent names as column headers."""
         label_str = " " * label_w
-        cols = ("  ").join(th.bold(a["name"][:col_w].center(col_w)) for a in agents)
-        raw = label_str + ("  ").join(
-            a["name"][:col_w].center(col_w) for a in agents
-        )
+        styled_parts = []
+        raw_parts = []
+        for a in agents:
+            name = a["name"][:col_w].center(col_w)
+            if a.get("inactive"):
+                suffix = " (inactive)"
+                name_raw = (a["name"] + suffix)[:col_w].center(col_w)
+                styled_parts.append(th.muted(name_raw))
+                raw_parts.append(name_raw)
+            else:
+                styled_parts.append(
+                    th.agent_name(name, a.get("id", "")),
+                )
+                raw_parts.append(name)
+        cols = ("  ").join(styled_parts)
+        raw = label_str + ("  ").join(raw_parts)
         return box_line(f"{label_str}{cols}", raw_len=len(raw))
 
     # ── Build output ──
@@ -445,6 +707,11 @@ def render_full(stats, simple=False, use_color=True, theme="gradient"):
     pace_cells = []
     pace_raw_cells = []
     for a in agents:
+        if a["plan_price"] == 0:
+            na_str = "N/A".rjust(pace_bar_w + 4)
+            pace_cells.append(th.muted(na_str))
+            pace_raw_cells.append(na_str)
+            continue
         raw_pct = a["pace_pct"]
         if math.isnan(raw_pct) or math.isinf(raw_pct):
             raw_pct = 0.0
@@ -452,7 +719,7 @@ def render_full(stats, simple=False, use_color=True, theme="gradient"):
         filled = int(pace_bar_w * pct / 100)
         empty = pace_bar_w - filled
         pct_label = f" {pct:.0f}%"
-        bar = th.progress_bar(filled, empty, pace_bar_w)
+        bar = th.agent_progress_bar(filled, empty, pace_bar_w, a.get("id", ""))
         pace_cells.append(f"{bar}{th.bold(pct_label)}")
         pace_raw_cells.append(
             "\u2588" * filled + "\u2591" * empty + pct_label,
@@ -527,7 +794,11 @@ def render_full(stats, simple=False, use_color=True, theme="gradient"):
         lines.append(
             _row_bold(
                 "Value Ratio",
-                [f"{a['value_ratio']:.1f}x" for a in agents],
+                [
+                    "N/A" if a["plan_price"] == 0
+                    else f"{a['value_ratio']:.1f}x"
+                    for a in agents
+                ],
             ),
         )
 
@@ -541,7 +812,7 @@ def render_full(stats, simple=False, use_color=True, theme="gradient"):
         for a in agents_with_models:
             lines.append(
                 box_line(
-                    th.bold(f"  {a['name']}"),
+                    f"  {th.agent_name(a['name'], a.get('id', ''))}",
                     raw_len=len(f"  {a['name']}"),
                 ),
             )
@@ -554,29 +825,27 @@ def render_full(stats, simple=False, use_color=True, theme="gradient"):
                 short = model
                 for prefix in ("claude-", "gemini-", "codex-"):
                     short = short.replace(prefix, "")
-                for suffix in (
-                    "-20251101", "-20250929", "-20250219",
-                    "-latest",
-                ):
-                    short = short.replace(suffix, "")
+                short = re.sub(r"-(\d{8}|latest)$", "", short)
 
                 out = usage.get("outputTokens", 0)
                 pct = int(out * 100 / total_out) if total_out else 0
+                pct_label = "<1%" if pct == 0 and out > 0 else "%d%%" % pct
 
                 mini_w = min(12, col_w - 2)
                 mini_filled = int(mini_w * pct / 100)
                 mini_empty = mini_w - mini_filled
-                bar = th.model_bar(mini_filled, mini_empty, short)
+                bar = th.agent_model_bar(mini_filled, mini_empty, short, a.get("id", ""))
 
                 fill_chars = _CH_FILL * mini_filled
                 empty_chars = _CH_EMPTY * mini_empty
                 detail = (
-                    "    " + fill_chars + empty_chars
-                    + f" {pct}%  {fmt(out)} tok"
+                    f"    {short:<16}"
+                    + fill_chars + empty_chars
+                    + f" {pct_label}  {fmt(out)} tok"
                 )
                 detail_styled = (
-                    f"    {bar}"
-                    f" {pct}%  {th.muted(f'{fmt(out)} tok')}"
+                    f"    {th.muted(f'{short:<16}')}{bar}"
+                    f" {pct_label}  {th.muted(f'{fmt(out)} tok')}"
                 )
                 lines.append(
                     box_line(detail_styled, raw_len=len(detail)),
@@ -584,29 +853,66 @@ def render_full(stats, simple=False, use_color=True, theme="gradient"):
             lines.append(box_empty())
 
     # ── DAILY ACTIVITY ──
+    if no_activity:
+        lines.append(box_bottom())
+        today_str = stats["today"]
+        lines.append(f"  {th.muted(f'Generated: {today_str}')}")
+        lines.append("")
+        return "\n".join(lines)
+
     lines.append(box_sep_light())
     lines.append(box_title("DAILY ACTIVITY"))
+    lines.append(box_line(f"  {th.muted('Messages per day')}", raw_len=len("  Messages per day")))
     lines.append(box_empty())
+
+    # Global max so bars are comparable across agents
+    global_max = 0  # type: int | float
+    for a in agents:
+        dm = a.get("daily_messages", {})
+        if not isinstance(dm, dict):
+            continue
+        for c in dm.values():
+            if (isinstance(c, (int, float))
+                    and math.isfinite(c) and c > global_max):
+                global_max = c
+    global_max = max(global_max, 1)
+
+    # Bar area: inner_w minus indent(4) minus date(5) minus gap(2) minus count+label(12)
+    bar_max = max(8, inner_w - 4 - 5 - 2 - 12)
 
     for a in agents:
-        spark_data = a.get("spark_data", [])
-        if not spark_data:
-            # Build from daily_messages
-            dm = a.get("daily_messages", {})
-            start_dt = datetime.strptime(a["period_start"], "%Y-%m-%d")
-            elapsed = a["days_elapsed"]
-            spark_data = []
-            for i in range(elapsed + 1):
-                day_str = (start_dt + timedelta(days=i)).strftime("%Y-%m-%d")
-                spark_data.append(dm.get(day_str, 0))
+        dm = a.get("daily_messages", {})
+        if not isinstance(dm, dict):
+            dm = {}
+        active_days = sorted(
+            (d, c) for d, c in dm.items()
+            if isinstance(c, (int, float)) and math.isfinite(c) and c > 0
+        )
+        if not active_days:
+            continue
 
-        spark = sparkline(spark_data)
-        label = a["name"]
-        spark_line = f"  {label:<14}{spark}"
-        spark_styled = f"  {th.muted(f'{label:<14}')}{th.accent(spark)}"
-        lines.append(box_line(spark_styled, raw_len=len(spark_line)))
+        lines.append(
+            box_line(
+                f"  {th.agent_name(a['name'], a.get('id', ''))}",
+                raw_len=len(f"  {a['name']}"),
+            ),
+        )
 
-    lines.append(box_empty())
+        for day, count in active_days:
+            short_date = day[5:]  # "MM-DD"
+            bar_len = max(1, int(bar_max * count / global_max))
+            bar = _CH_FILL * bar_len
+            count_str = fmt(count)
+            label = "%s msgs" % count_str
+            raw = f"    {short_date}  {bar} {label}"
+            styled = (
+                f"    {th.muted(short_date)}  "
+                f"{th.agent_bar(bar, a.get('id', ''))} {th.bold(count_str)}"
+                f" {th.muted('msgs')}"
+            )
+            lines.append(box_line(styled, raw_len=len(raw)))
+
+        lines.append(box_empty())
     lines.append(box_bottom())
 
     # Footer
@@ -614,6 +920,98 @@ def render_full(stats, simple=False, use_color=True, theme="gradient"):
     lines.append(f"  {th.muted(f'Generated: {today_str}')}")
     lines.append("")
 
+    return "\n".join(lines)
+
+
+# ── Period-over-period diff ─────────────────────────────────────────
+
+
+def _diff_str(cur, prev, is_usd=False):
+    """Format a delta value as ``+X`` / ``-X`` with sign."""
+    delta = cur - prev
+    if is_usd:
+        sign = "+" if delta >= 0 else ""
+        return "%s$%.2f" % (sign, delta)
+    sign = "+" if delta >= 0 else ""
+    return "%s%s" % (sign, fmt(delta))
+
+
+def render_diff(current, previous):
+    """Plain-text period-over-period comparison.
+
+    Parameters
+    ----------
+    current, previous : dict
+        Output of :func:`aggregate_stats` for the current and
+        previous billing periods.
+    """
+    lines = [""]
+    lines.append("BURNCTL PERIOD-OVER-PERIOD DIFF")
+    lines.append("")
+
+    cur_agents = {a["id"]: a for a in current.get("agents", [])}
+    prev_agents = {a["id"]: a for a in previous.get("agents", [])}
+    all_ids = list(dict.fromkeys(
+        list(cur_agents.keys()) + list(prev_agents.keys()),
+    ))
+
+    if not all_ids:
+        return "No agent data available."
+
+    for aid in all_ids:
+        cur = cur_agents.get(aid)
+        prev = prev_agents.get(aid)
+        agent = cur if cur is not None else prev
+        name = agent["name"]  # type: ignore[index]
+
+        lines.append(f"  {name}")
+        lines.append(
+            f"    Period: "
+            f"{prev['period_start'] if prev else '?'}"
+            f" - {prev['period_end'] if prev else '?'}"
+            f"  vs  "
+            f"{cur['period_start'] if cur else '?'}"
+            f" - {cur['period_end'] if cur else '?'}"
+        )
+        lines.append("")
+
+        metrics = [
+            ("Messages", "messages", False),
+            ("Sessions", "sessions", False),
+            ("Output Tokens", "output_tokens", False),
+            ("Tool Calls", "tool_calls", False),
+            ("Est. API Cost", "period_cost", True),
+        ]
+        hdr = f"    {'Metric':<16} {'Last':>10}  {'Current':>10}  {'Delta':>10}"
+        lines.append(hdr)
+        lines.append("    " + "-" * (len(hdr) - 4))
+
+        for label, key, is_usd in metrics:
+            c = cur.get(key, 0) if cur else 0
+            p = prev.get(key, 0) if prev else 0
+            if is_usd:
+                c_str = fmt_usd(c)
+                p_str = fmt_usd(p)
+            else:
+                c_str = fmt(c)
+                p_str = fmt(p)
+            delta = _diff_str(c, p, is_usd)
+            lines.append(
+                f"    {label:<16} {p_str:>10}  {c_str:>10}  {delta:>10}",
+            )
+        lines.append("")
+
+    # System total
+    cur_total = current.get("total_period_cost", 0)
+    prev_total = previous.get("total_period_cost", 0)
+    lines.append(
+        f"  System Total: {fmt_usd(prev_total)} -> "
+        f"{fmt_usd(cur_total)}  "
+        f"({_diff_str(cur_total, prev_total, True)})",
+    )
+    lines.append("")
+    lines.append(f"  Generated: {current.get('today', '')}")
+    lines.append("")
     return "\n".join(lines)
 
 

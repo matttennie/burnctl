@@ -15,7 +15,10 @@ DEFAULTS = {
     "no_color": False,
     "simple": False,
     "compact": False,
+    "no_activity": False,
     "claude_plan": "max5x",
+    "gemini_plan": "none",
+    "codex_plan": "none",
 }
 
 # Theme options: gradient (24-bit gradient), classic (16-color), colorblind, accessible
@@ -26,6 +29,18 @@ PLAN_PRICES = {
     "pro": 20,
     "max5x": 100,
     "max20x": 200,
+}
+
+GEMINI_PLAN_PRICES = {
+    "none": 0,
+    "ai_pro": 25,
+    "ai_ultra": 250,
+}
+
+CODEX_PLAN_PRICES = {
+    "none": 0,
+    "plus": 20,
+    "pro": 200,
 }
 
 # Pro is the only plan with annual option ($200/yr = $16.67/mo effective)
@@ -45,6 +60,14 @@ _VALIDATORS = {
     "claude_plan": (
         lambda v: v in PLAN_PRICES,
         f"must be one of: {', '.join(PLAN_PRICES.keys())}",
+    ),
+    "gemini_plan": (
+        lambda v: v in GEMINI_PLAN_PRICES,
+        f"must be one of: {', '.join(GEMINI_PLAN_PRICES.keys())}",
+    ),
+    "codex_plan": (
+        lambda v: v in CODEX_PLAN_PRICES,
+        f"must be one of: {', '.join(CODEX_PLAN_PRICES.keys())}",
     ),
     "billing_interval": (
         lambda v: v in _INTERVAL_ALIASES,
@@ -110,8 +133,9 @@ def show():
     print()
     print("Set values with: burnctl config <key> <value>")
     print("  e.g.: burnctl config claude_plan max5x")
+    print("        burnctl config gemini_plan ai_pro")
+    print("        burnctl config codex_plan plus")
     print("        burnctl config billing_day 15")
-    print("        burnctl config billing_interval yr")
 
 
 def set_value(key, value):

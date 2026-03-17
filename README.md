@@ -12,6 +12,7 @@ Aggregates usage data from multiple AI coding agents into a single terminal repo
 | Gemini CLI | Full | `~/.gemini/` session history |
 | OpenAI Codex CLI | Full | `~/.codex/sessions/` JSONL |
 | Aider | Full | `.aider.chat.history.md` |
+| API providers (OpenRouter, HuggingFace, etc.) | Full | `~/.config/orchard/usage.jsonl` |
 | Ollama (local) | Detection | Always $0 |
 | Cline, OpenCode, DebGPT | Stub | Planned |
 
@@ -44,9 +45,10 @@ burnctl -e          # Export to CSV (default: burnctl.csv)
 burnctl -e out.csv  # Export to specific file
 
 # Display options
-burnctl -s          # Simple (skip VALUE & ROI section)
-burnctl -n          # No color
-burnctl -t classic  # Theme: gradient, classic, colorblind, accessible
+burnctl -s              # Simple (skip VALUE & ROI section)
+burnctl --no-activity   # Hide daily activity section
+burnctl -n              # No color
+burnctl -t classic      # Theme: gradient, classic, colorblind, accessible
 
 # Billing overrides
 burnctl -p max5x    # Override Claude plan
@@ -68,7 +70,7 @@ burnctl config claude_plan max5x  # Set Claude plan
 burnctl config theme colorblind   # Set color theme
 ```
 
-Available settings: `billing_day`, `billing_interval`, `claude_plan`, `default_agents`, `theme`, `no_color`, `simple`, `compact`.
+Available settings: `billing_day`, `billing_interval`, `claude_plan`, `default_agents`, `theme`, `no_color`, `simple`, `compact`, `no_activity`.
 
 ## Upgrade
 
@@ -95,6 +97,7 @@ burnctl/
     ├── gemini.py       # Gemini CLI collector
     ├── codex.py        # OpenAI Codex collector
     ├── aider.py        # Aider collector
+    ├── api_usage.py    # API provider collector (OpenRouter, HuggingFace, etc.)
     ├── local.py        # Ollama/local models
     └── stubs.py        # Future agent stubs
 ```

@@ -272,13 +272,15 @@ class TestClaudePlanInfo:
         assert info["plan_name"] == "pro"
         assert info["plan_price"] == 20
 
-    def test_generic_plan_key_fallback(self):
-        info = ClaudeCollector().get_plan_info({"plan": "free"})
-        assert info["plan_name"] == "free"
-        assert info["plan_price"] == 0
+    def test_env_var_overrides_config(self):
+        with patch.dict(os.environ, {"CLAUDE_PLAN": "pro"}):
+            info = ClaudeCollector().get_plan_info({"claude_plan": "max20x"})
+        assert info["plan_name"] == "pro"
+        assert info["plan_price"] == 20
 
-    def test_claude_plan_overrides_generic_plan(self):
-        info = ClaudeCollector().get_plan_info({"claude_plan": "max20x", "plan": "free"})
+    def test_env_var_invalid_falls_back_to_config(self):
+        with patch.dict(os.environ, {"CLAUDE_PLAN": "bogus"}):
+            info = ClaudeCollector().get_plan_info({"claude_plan": "max20x"})
         assert info["plan_name"] == "max20x"
         assert info["plan_price"] == 200
 
@@ -301,6 +303,104 @@ class TestClaudePlanInfo:
     def test_billing_day_from_config(self):
         info = ClaudeCollector().get_plan_info({"billing_day": 25})
         assert info["billing_day"] == 25
+
+    # ── Warning when using default plan without explicit config ──
+
+    def test_warning_printed_when_default_and_config_file_missing(self, capsys):
+        """Warning emitted when plan is default max5x and config file absent."""
+        with patch("builtins.open", side_effect=OSError("no such file")):
+            info = ClaudeCollector().get_plan_info({})
+        assert info["plan_name"] == "max5x"
+        err = capsys.readouterr().err
+        assert "Warning" in err
+        assert "burnctl config claude_plan" in err
+
+    def test_warning_printed_when_default_and_config_file_has_no_claude_plan(
+        self, tmp_path, capsys,
+    ):
+        """Warning emitted when config.json exists but lacks claude_plan key."""
+        cfg = tmp_path / "config.json"
+        cfg.write_text(json.dumps({"billing_day": 15}))
+        with patch("builtins.open", mock_open(read_data=cfg.read_text())):
+            info = ClaudeCollector().get_plan_info({})
+        assert info["plan_name"] == "max5x"
+        err = capsys.readouterr().err
+        assert "Warning" in err
+        assert "burnctl config claude_plan" in err
+
+    def test_no_warning_when_config_file_has_claude_plan(self, tmp_path, capsys):
+        """No warning when config.json explicitly includes claude_plan."""
+        cfg = tmp_path / "config.json"
+        cfg.write_text(json.dumps({"claude_plan": "max5x"}))
+        with patch("builtins.open", mock_open(read_data=cfg.read_text())):
+            info = ClaudeCollector().get_plan_info({"claude_plan": "max5x"})
+        assert info["plan_name"] == "max5x"
+        err = capsys.readouterr().err
+        assert err == ""
+
+    def test_no_warning_when_non_default_plan_from_config(self, capsys):
+        """No warning when config provides a plan other than max5x."""
+        info = ClaudeCollector().get_plan_info({"claude_plan": "pro"})
+        assert info["plan_name"] == "pro"
+        err = capsys.readouterr().err
+        assert err == ""
+
+    def test_no_warning_when_env_var_set(self, capsys):
+        """No warning when CLAUDE_PLAN env var selects a valid plan."""
+        with patch.dict(os.environ, {"CLAUDE_PLAN": "pro"}):
+            info = ClaudeCollector().get_plan_info({})
+        assert info["plan_name"] == "pro"
+        err = capsys.readouterr().err
+        assert err == ""
+
+    def test_no_warning_when_claude_plan_set_flag(self, capsys):
+        """No warning when _claude_plan_set sentinel is truthy in config."""
+        info = ClaudeCollector().get_plan_info({
+            "claude_plan": "max5x",
+            "_claude_plan_set": True,
+        })
+        assert info["plan_name"] == "max5x"
+        err = capsys.readouterr().err
+        assert err == ""
+
+    def test_warning_message_contains_set_command(self, capsys):
+        """Warning text includes the burnctl config command for discoverability."""
+        with patch("builtins.open", side_effect=OSError("no file")):
+            ClaudeCollector().get_plan_info({})
+        err = capsys.readouterr().err
+        assert "burnctl config claude_plan" in err
+
+    def test_warning_mentions_max5x_default(self, capsys):
+        """Warning text mentions the defaulted plan name."""
+        with patch("builtins.open", side_effect=OSError("no file")):
+            ClaudeCollector().get_plan_info({})
+        err = capsys.readouterr().err
+        assert "max5x" in err
+
+    def test_env_var_max5x_no_warning(self, capsys):
+        """Even max5x via env var should suppress the warning."""
+        with patch.dict(os.environ, {"CLAUDE_PLAN": "max5x"}):
+            info = ClaudeCollector().get_plan_info({})
+        assert info["plan_name"] == "max5x"
+        err = capsys.readouterr().err
+        assert err == ""
+
+    def test_invalid_env_var_falls_back_to_default_with_warning(self, capsys):
+        """Invalid CLAUDE_PLAN falls back to default max5x and warns."""
+        with patch.dict(os.environ, {"CLAUDE_PLAN": "nope"}), \
+             patch("builtins.open", side_effect=OSError("no file")):
+            info = ClaudeCollector().get_plan_info({})
+        assert info["plan_name"] == "max5x"
+        err = capsys.readouterr().err
+        assert "Warning" in err
+
+    def test_corrupt_config_file_triggers_warning(self, capsys):
+        """Corrupt config.json triggers warning (JSONDecodeError caught)."""
+        with patch("builtins.open", mock_open(read_data="{{not json")):
+            info = ClaudeCollector().get_plan_info({})
+        assert info["plan_name"] == "max5x"
+        err = capsys.readouterr().err
+        assert "burnctl config claude_plan" in err
 
 
 class TestClaudeUpgradeUrl:
@@ -391,6 +491,179 @@ class TestClaudeGetPricingTable:
 
         assert mock_get_pricing.call_count == 2
         assert "new-model" in table
+
+
+class TestClaudeScanSessionsAfter:
+    """Verify _scan_sessions_after parses raw session JSONL files."""
+
+    def _make_session_file(self, tmp_path, entries):
+        """Write a fake session JSONL under a projects dir structure."""
+        proj = tmp_path / "projects" / "test-project"
+        proj.mkdir(parents=True)
+        fpath = proj / "session-abc.jsonl"
+        lines = [json.dumps(e) for e in entries]
+        fpath.write_text("\n".join(lines) + "\n")
+        return fpath
+
+    def test_picks_up_iso_timestamps(self, tmp_path):
+        entries = [
+            {
+                "type": "user",
+                "timestamp": "2026-03-12T10:00:00.000Z",
+                "sessionId": "s1",
+                "message": {"role": "user", "content": "hi"},
+            },
+            {
+                "type": "assistant",
+                "timestamp": "2026-03-12T10:00:01.000Z",
+                "sessionId": "s1",
+                "message": {
+                    "model": "claude-opus-4-6",
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": "hello"}],
+                    "usage": {
+                        "input_tokens": 10,
+                        "output_tokens": 50,
+                        "cache_read_input_tokens": 100,
+                        "cache_creation_input_tokens": 0,
+                        "cache_creation": {"ephemeral_5m_input_tokens": 200},
+                    },
+                },
+            },
+        ]
+        self._make_session_file(tmp_path, entries)
+
+        with patch("burnctl.collectors.claude.PROJECTS_DIR", str(tmp_path / "projects")):
+            act, tok, delta = ClaudeCollector._scan_sessions_after("2026-03-11", "2026-03-13")
+
+        assert len(act) == 1
+        assert act[0]["date"] == "2026-03-12"
+        assert act[0]["messageCount"] == 1
+        assert act[0]["sessionCount"] == 1
+
+        assert len(tok) == 1
+        assert tok[0]["tokensByModel"]["claude-opus-4-6"] == 50
+
+        assert delta["claude-opus-4-6"]["outputTokens"] == 50
+        assert delta["claude-opus-4-6"]["inputTokens"] == 10
+        assert delta["claude-opus-4-6"]["cacheCreationInputTokens"] == 200
+
+    def test_counts_tool_use_blocks(self, tmp_path):
+        entries = [
+            {
+                "type": "assistant",
+                "timestamp": "2026-03-12T10:00:00.000Z",
+                "sessionId": "s1",
+                "message": {
+                    "model": "claude-opus-4-6",
+                    "role": "assistant",
+                    "content": [
+                        {"type": "tool_use", "name": "Read", "id": "t1", "input": {}},
+                        {"type": "tool_use", "name": "Edit", "id": "t2", "input": {}},
+                        {"type": "text", "text": "done"},
+                    ],
+                    "usage": {"input_tokens": 5, "output_tokens": 20},
+                },
+            },
+        ]
+        self._make_session_file(tmp_path, entries)
+
+        with patch("burnctl.collectors.claude.PROJECTS_DIR", str(tmp_path / "projects")):
+            act, _, _ = ClaudeCollector._scan_sessions_after("2026-03-11", "2026-03-13")
+
+        assert act[0]["toolCallCount"] == 2
+
+    def test_skips_entries_on_cutoff_date(self, tmp_path):
+        entries = [
+            {
+                "type": "user",
+                "timestamp": "2026-03-11T23:59:59.000Z",
+                "sessionId": "s1",
+                "message": {"role": "user", "content": "on cutoff day"},
+            },
+        ]
+        self._make_session_file(tmp_path, entries)
+
+        with patch("burnctl.collectors.claude.PROJECTS_DIR", str(tmp_path / "projects")):
+            act, _, _ = ClaudeCollector._scan_sessions_after("2026-03-11", "2026-03-13")
+
+        assert len(act) == 0
+
+    def test_no_projects_dir(self):
+        with patch("burnctl.collectors.claude.PROJECTS_DIR", "/nonexistent/path"):
+            act, tok, delta = ClaudeCollector._scan_sessions_after("2026-03-11", "2026-03-13")
+        assert act == []
+        assert tok == []
+        assert delta == {}
+
+    def test_numeric_timestamps(self, tmp_path):
+        """Epoch-ms timestamps (from history.jsonl format) also work."""
+        # 2026-03-12 12:00:00 UTC in ms
+        ts_ms = 1773331200000
+        entries = [
+            {
+                "type": "user",
+                "timestamp": ts_ms,
+                "sessionId": "s2",
+                "message": {"role": "user", "content": "epoch test"},
+            },
+        ]
+        self._make_session_file(tmp_path, entries)
+
+        with patch("burnctl.collectors.claude.PROJECTS_DIR", str(tmp_path / "projects")):
+            act, _, _ = ClaudeCollector._scan_sessions_after("2026-03-11", "2026-03-13")
+
+        assert len(act) == 1
+        assert act[0]["messageCount"] == 1
+
+
+class TestClaudeLoadDataGapFill:
+    """Verify _load_data merges stale cache with live session data."""
+
+    def test_stale_cache_triggers_scan(self):
+        cache = {
+            "lastComputedDate": "2026-03-11",
+            "dailyActivity": [
+                {"date": "2026-03-10", "messageCount": 10, "sessionCount": 1, "toolCallCount": 5},
+            ],
+            "dailyModelTokens": [],
+            "modelUsage": {},
+            "totalMessages": 100,
+            "totalSessions": 10,
+        }
+        extra_act = [{"date": "2026-03-12", "messageCount": 20, "sessionCount": 3, "toolCallCount": 8}]
+        extra_tok = [{"date": "2026-03-12", "tokensByModel": {"claude-opus-4-6": 5000}}]
+        model_delta = {"claude-opus-4-6": {"outputTokens": 5000, "inputTokens": 100}}
+
+        collector = ClaudeCollector()
+        with patch("burnctl.collectors.claude.os.path.isfile", return_value=True), \
+             patch("builtins.open", mock_open(read_data=json.dumps(cache))), \
+             patch("burnctl.collectors.claude.datetime") as mock_dt, \
+             patch.object(ClaudeCollector, "_scan_sessions_after",
+                          return_value=(extra_act, extra_tok, model_delta)):
+            mock_dt.now.return_value = datetime(2026, 3, 13)
+            mock_dt.strptime = datetime.strptime
+            result = collector._load_data()
+
+        assert len(result["dailyActivity"]) == 2
+        assert result["totalMessages"] == 120
+        assert result["totalSessions"] == 13
+        assert result["modelUsage"]["claude-opus-4-6"]["outputTokens"] == 5000
+
+    def test_fresh_cache_skips_scan(self):
+        cache = {"lastComputedDate": "2026-03-13", "totalMessages": 50}
+
+        collector = ClaudeCollector()
+        with patch("burnctl.collectors.claude.os.path.isfile", return_value=True), \
+             patch("builtins.open", mock_open(read_data=json.dumps(cache))), \
+             patch("burnctl.collectors.claude.datetime") as mock_dt, \
+             patch.object(ClaudeCollector, "_scan_sessions_after") as mock_scan:
+            mock_dt.now.return_value = datetime(2026, 3, 13)
+            mock_dt.strptime = datetime.strptime
+            result = collector._load_data()
+
+        mock_scan.assert_not_called()
+        assert result["totalMessages"] == 50
 
 
 # ---------------------------------------------------------------------------
@@ -624,9 +897,23 @@ class TestGeminiGetStats:
 class TestGeminiPlanInfo:
     def test_default(self):
         info = GeminiCollector().get_plan_info({})
-        assert info["plan_name"] == "pay-as-you-go"
+        assert info["plan_name"] == "none"
         assert info["plan_price"] == 0
         assert info["billing_day"] == 1
+
+    def test_ai_pro(self):
+        info = GeminiCollector().get_plan_info({"gemini_plan": "ai_pro"})
+        assert info["plan_name"] == "ai_pro"
+        assert info["plan_price"] == 25
+
+    def test_ai_ultra(self):
+        info = GeminiCollector().get_plan_info({"gemini_plan": "ai_ultra"})
+        assert info["plan_name"] == "ai_ultra"
+        assert info["plan_price"] == 250
+
+    def test_unknown_plan_defaults_zero(self):
+        info = GeminiCollector().get_plan_info({"gemini_plan": "bogus"})
+        assert info["plan_price"] == 0
 
     def test_custom_billing_day(self):
         info = GeminiCollector().get_plan_info({"billing_day": 15})
@@ -808,9 +1095,9 @@ class TestCodexDefaultModelPricing:
         assert "input" in p
         assert "output" in p
         assert "cache_read" in p
-        assert p["input"] == 1.50
-        assert p["output"] == 6.0
-        assert p["cache_read"] == 0.375
+        assert p["input"] == 2.50
+        assert p["output"] == 15.0
+        assert p["cache_read"] == 0.25
 
 
 class TestCodexIsAvailable:
@@ -1081,9 +1368,23 @@ class TestCodexCountHistory:
 class TestCodexPlanInfo:
     def test_default(self):
         info = CodexCollector().get_plan_info({})
-        assert info["plan_name"] == "pay-as-you-go"
+        assert info["plan_name"] == "none"
         assert info["plan_price"] == 0
         assert info["billing_day"] == 1
+
+    def test_plus(self):
+        info = CodexCollector().get_plan_info({"codex_plan": "plus"})
+        assert info["plan_name"] == "plus"
+        assert info["plan_price"] == 20
+
+    def test_pro(self):
+        info = CodexCollector().get_plan_info({"codex_plan": "pro"})
+        assert info["plan_name"] == "pro"
+        assert info["plan_price"] == 200
+
+    def test_unknown_plan_defaults_zero(self):
+        info = CodexCollector().get_plan_info({"codex_plan": "bogus"})
+        assert info["plan_price"] == 0
 
     def test_custom_billing_day(self):
         info = CodexCollector().get_plan_info({"billing_day": 20})
@@ -1382,3 +1683,404 @@ class TestCodexGetStatsEdgeCases:
         assert stats["total_messages"] == 10
         # History has 3 unique sessions (s0, s1, s2), parsed had 1 -> history wins
         assert stats["total_sessions"] == 3
+
+
+# ---------------------------------------------------------------------------
+# API usage collector
+# ---------------------------------------------------------------------------
+
+from burnctl.collectors.api_usage import (
+    ApiUsageCollector,
+    _parse_ts,
+    _parse_entry,
+    _load_entries,
+    USAGE_FILE,
+)
+
+
+class TestApiUsageParseTs:
+    """Verify _parse_ts() handles various timestamp formats."""
+
+    def test_iso8601_with_z_suffix(self):
+        result = _parse_ts("2026-03-17T14:30:00.000Z")
+        assert result is not None
+        assert result.year == 2026
+        assert result.month == 3
+        assert result.day == 17
+        assert result.hour == 14
+        assert result.minute == 30
+        assert result.tzinfo is None  # naive after stripping
+
+    def test_iso8601_with_offset(self):
+        result = _parse_ts("2026-03-17T14:30:00+00:00")
+        assert result is not None
+        assert result.year == 2026
+        assert result.month == 3
+        assert result.day == 17
+        assert result.tzinfo is None
+
+    def test_returns_none_for_empty_string(self):
+        assert _parse_ts("") is None
+
+    def test_returns_none_for_none(self):
+        assert _parse_ts(None) is None
+
+    def test_returns_none_for_non_string(self):
+        assert _parse_ts(12345) is None
+
+    def test_returns_none_for_invalid_date_string(self):
+        assert _parse_ts("not-a-date") is None
+
+
+class TestApiUsageParseEntry:
+    """Verify _parse_entry() validates and normalises JSONL lines."""
+
+    def test_valid_complete_entry(self):
+        line = json.dumps({
+            "ts": "2026-03-17T14:30:00.000Z",
+            "provider": "openrouter",
+            "model_id": "anthropic/claude-opus-4-6",
+            "model_name": "Claude Opus 4.6",
+            "input_tokens": 1500,
+            "output_tokens": 800,
+            "cost": 0.024,
+            "node_id": "node-abc",
+            "estimated": False,
+        })
+        result = _parse_entry(line)
+        assert result is not None
+        assert result["provider"] == "openrouter"
+        assert result["model_id"] == "anthropic/claude-opus-4-6"
+        assert result["model_name"] == "Claude Opus 4.6"
+        assert result["input_tokens"] == 1500
+        assert result["output_tokens"] == 800
+        assert result["cost"] == pytest.approx(0.024)
+        assert result["node_id"] == "node-abc"
+        assert result["estimated"] is False
+        assert result["ts"].year == 2026
+
+    def test_missing_timestamp_returns_none(self):
+        line = json.dumps({
+            "provider": "openrouter",
+            "model_id": "anthropic/claude-opus-4-6",
+        })
+        assert _parse_entry(line) is None
+
+    def test_missing_provider_returns_none(self):
+        line = json.dumps({
+            "ts": "2026-03-17T14:30:00.000Z",
+            "model_id": "anthropic/claude-opus-4-6",
+        })
+        assert _parse_entry(line) is None
+
+    def test_missing_model_id_returns_none(self):
+        line = json.dumps({
+            "ts": "2026-03-17T14:30:00.000Z",
+            "provider": "openrouter",
+        })
+        assert _parse_entry(line) is None
+
+    def test_empty_line_returns_none(self):
+        assert _parse_entry("") is None
+        assert _parse_entry("   ") is None
+
+    def test_invalid_json_returns_none(self):
+        assert _parse_entry("{not valid json}") is None
+
+    def test_non_dict_json_returns_none(self):
+        assert _parse_entry('"just a string"') is None
+        assert _parse_entry("[1, 2, 3]") is None
+
+    def test_estimated_defaults_to_false(self):
+        line = json.dumps({
+            "ts": "2026-03-17T14:30:00.000Z",
+            "provider": "openrouter",
+            "model_id": "anthropic/claude-opus-4-6",
+        })
+        result = _parse_entry(line)
+        assert result is not None
+        assert result["estimated"] is False
+
+    def test_input_tokens_defaults_to_zero(self):
+        line = json.dumps({
+            "ts": "2026-03-17T14:30:00.000Z",
+            "provider": "openrouter",
+            "model_id": "anthropic/claude-opus-4-6",
+        })
+        result = _parse_entry(line)
+        assert result is not None
+        assert result["input_tokens"] == 0
+
+
+class TestApiUsageCollectorAvailability:
+    """is_available checks whether the usage JSONL file has matching entries."""
+
+    def test_available_when_file_has_matching_provider(self, tmp_path):
+        usage_file = tmp_path / "usage.jsonl"
+        entry = json.dumps({
+            "ts": "2026-03-17T14:30:00.000Z",
+            "provider": "openrouter",
+            "model_id": "anthropic/claude-opus-4-6",
+        })
+        usage_file.write_text(entry + "\n")
+        collector = ApiUsageCollector("openrouter", "OpenRouter", usage_file=str(usage_file))
+        assert collector.is_available() is True
+
+    def test_unavailable_when_file_missing(self, tmp_path):
+        usage_file = tmp_path / "nonexistent.jsonl"
+        collector = ApiUsageCollector("openrouter", "OpenRouter", usage_file=str(usage_file))
+        assert collector.is_available() is False
+
+
+class TestApiUsageCollectorGetStats:
+    """get_stats with controlled JSONL data via tmp_path."""
+
+    @staticmethod
+    def _make_entry(
+        ts, provider="openrouter", model_id="anthropic/claude-opus-4-6",
+        model_name="Claude Opus 4.6", input_tokens=1000, output_tokens=500,
+        cost=0.01, node_id="node-1", estimated=False,
+    ):
+        return json.dumps({
+            "ts": ts,
+            "provider": provider,
+            "model_id": model_id,
+            "model_name": model_name,
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "cost": cost,
+            "node_id": node_id,
+            "estimated": estimated,
+        })
+
+    def test_returns_none_when_file_missing(self, tmp_path):
+        collector = ApiUsageCollector("openrouter", "OpenRouter", usage_file=str(tmp_path / "nope.jsonl"))
+        stats = collector.get_stats(
+            datetime(2026, 3, 10), datetime(2026, 4, 10), datetime(2026, 3, 13),
+        )
+        assert stats is None
+
+    def test_returns_none_when_file_empty(self, tmp_path):
+        usage_file = tmp_path / "usage.jsonl"
+        usage_file.write_text("")
+        collector = ApiUsageCollector("openrouter", "OpenRouter", usage_file=str(usage_file))
+        stats = collector.get_stats(
+            datetime(2026, 3, 10), datetime(2026, 4, 10), datetime(2026, 3, 13),
+        )
+        assert stats is None
+
+    def test_period_filtering(self, tmp_path):
+        """Only entries within [start, end) are counted in period stats."""
+        lines = [
+            self._make_entry("2026-03-11T10:00:00Z", cost=0.05),
+            self._make_entry("2026-03-12T10:00:00Z", cost=0.03),
+            # Outside period
+            self._make_entry("2025-06-15T10:00:00Z", cost=0.10),
+        ]
+        usage_file = tmp_path / "usage.jsonl"
+        usage_file.write_text("\n".join(lines) + "\n")
+
+        start = datetime(2026, 3, 10)
+        end = datetime(2026, 4, 10)
+        ref_date = datetime(2026, 3, 13)
+
+        collector = ApiUsageCollector("openrouter", "OpenRouter", usage_file=str(usage_file))
+        stats = collector.get_stats(start, end, ref_date)
+
+        assert stats is not None
+        assert stats["messages"] == 2
+        assert stats["period_cost"] == pytest.approx(0.08)
+
+    def test_multiple_entries_models_nodes(self, tmp_path):
+        """Multiple entries with different models and node IDs."""
+        lines = [
+            self._make_entry(
+                "2026-03-11T10:00:00Z", model_id="model-a",
+                model_name="Model A",
+                input_tokens=1000, output_tokens=500, cost=0.02, node_id="n1",
+            ),
+            self._make_entry(
+                "2026-03-11T14:00:00Z", model_id="model-b",
+                model_name="Model B",
+                input_tokens=2000, output_tokens=800, cost=0.05, node_id="n2",
+            ),
+            self._make_entry(
+                "2026-03-12T10:00:00Z", model_id="model-a",
+                model_name="Model A",
+                input_tokens=500, output_tokens=300, cost=0.01, node_id="n3",
+            ),
+        ]
+        usage_file = tmp_path / "usage.jsonl"
+        usage_file.write_text("\n".join(lines) + "\n")
+
+        start = datetime(2026, 3, 10)
+        end = datetime(2026, 4, 10)
+        ref_date = datetime(2026, 3, 13)
+
+        collector = ApiUsageCollector("openrouter", "OpenRouter", usage_file=str(usage_file))
+        stats = collector.get_stats(start, end, ref_date)
+
+        assert stats is not None
+        assert stats["messages"] == 3
+        assert stats["sessions"] == 3  # 3 distinct node_ids
+        assert stats["output_tokens"] == 500 + 800 + 300
+        assert stats["period_cost"] == pytest.approx(0.08)
+
+        # Model usage keyed by model_name
+        assert "Model A" in stats["model_usage"]
+        assert "Model B" in stats["model_usage"]
+        assert stats["model_usage"]["Model A"]["inputTokens"] == 1500
+        assert stats["model_usage"]["Model A"]["outputTokens"] == 800
+        assert stats["model_usage"]["Model B"]["inputTokens"] == 2000
+        assert stats["model_usage"]["Model B"]["outputTokens"] == 800
+
+    def test_alltime_cost_includes_all_entries(self, tmp_path):
+        """alltime_cost includes entries outside the billing period."""
+        lines = [
+            self._make_entry("2026-03-11T10:00:00Z", cost=0.05),
+            self._make_entry("2025-06-15T10:00:00Z", cost=0.10),
+        ]
+        usage_file = tmp_path / "usage.jsonl"
+        usage_file.write_text("\n".join(lines) + "\n")
+
+        collector = ApiUsageCollector("openrouter", "OpenRouter", usage_file=str(usage_file))
+        stats = collector.get_stats(
+            datetime(2026, 3, 10), datetime(2026, 4, 10), datetime(2026, 3, 13),
+        )
+
+        assert stats is not None
+        assert stats["alltime_cost"] == pytest.approx(0.15)
+        assert stats["period_cost"] == pytest.approx(0.05)
+        assert stats["alltime_cost"] > stats["period_cost"]
+
+    def test_sessions_count_distinct_node_ids(self, tmp_path):
+        """Sessions = number of distinct node_ids in the period."""
+        lines = [
+            self._make_entry("2026-03-11T10:00:00Z", node_id="n1"),
+            self._make_entry("2026-03-11T11:00:00Z", node_id="n1"),
+            self._make_entry("2026-03-11T12:00:00Z", node_id="n2"),
+        ]
+        usage_file = tmp_path / "usage.jsonl"
+        usage_file.write_text("\n".join(lines) + "\n")
+
+        collector = ApiUsageCollector("openrouter", "OpenRouter", usage_file=str(usage_file))
+        stats = collector.get_stats(
+            datetime(2026, 3, 10), datetime(2026, 4, 10), datetime(2026, 3, 13),
+        )
+
+        assert stats is not None
+        assert stats["sessions"] == 2  # n1 and n2
+
+    def test_daily_messages_bucketing(self, tmp_path):
+        """Messages are bucketed by date string."""
+        lines = [
+            self._make_entry("2026-03-11T10:00:00Z"),
+            self._make_entry("2026-03-11T14:00:00Z"),
+            self._make_entry("2026-03-12T10:00:00Z"),
+        ]
+        usage_file = tmp_path / "usage.jsonl"
+        usage_file.write_text("\n".join(lines) + "\n")
+
+        collector = ApiUsageCollector("openrouter", "OpenRouter", usage_file=str(usage_file))
+        stats = collector.get_stats(
+            datetime(2026, 3, 10), datetime(2026, 4, 10), datetime(2026, 3, 13),
+        )
+
+        assert stats is not None
+        assert stats["daily_messages"]["2026-03-11"] == 2
+        assert stats["daily_messages"]["2026-03-12"] == 1
+
+    def test_spark_data_length(self, tmp_path):
+        """spark_data has days_elapsed + 1 entries."""
+        lines = [
+            self._make_entry("2026-03-11T10:00:00Z"),
+        ]
+        usage_file = tmp_path / "usage.jsonl"
+        usage_file.write_text("\n".join(lines) + "\n")
+
+        start = datetime(2026, 3, 10)
+        end = datetime(2026, 4, 10)
+        ref_date = datetime(2026, 3, 13)
+
+        collector = ApiUsageCollector("openrouter", "OpenRouter", usage_file=str(usage_file))
+        stats = collector.get_stats(start, end, ref_date)
+
+        assert stats is not None
+        days_elapsed = min(
+            (ref_date - start).days,
+            (end - start).days,
+        )
+        assert len(stats["spark_data"]) == days_elapsed + 1
+
+    def test_first_session_date(self, tmp_path):
+        """first_session is the earliest entry across all time."""
+        lines = [
+            self._make_entry("2026-03-11T10:00:00Z"),
+            self._make_entry("2025-01-01T10:00:00Z"),
+            self._make_entry("2026-03-12T10:00:00Z"),
+        ]
+        usage_file = tmp_path / "usage.jsonl"
+        usage_file.write_text("\n".join(lines) + "\n")
+
+        collector = ApiUsageCollector("openrouter", "OpenRouter", usage_file=str(usage_file))
+        stats = collector.get_stats(
+            datetime(2026, 3, 10), datetime(2026, 4, 10), datetime(2026, 3, 13),
+        )
+
+        assert stats is not None
+        assert stats["first_session"] == "2025-01-01"
+
+    def test_returns_all_expected_keys(self, tmp_path):
+        """Stats dict contains all required keys."""
+        lines = [
+            self._make_entry("2026-03-11T10:00:00Z"),
+        ]
+        usage_file = tmp_path / "usage.jsonl"
+        usage_file.write_text("\n".join(lines) + "\n")
+
+        collector = ApiUsageCollector("openrouter", "OpenRouter", usage_file=str(usage_file))
+        stats = collector.get_stats(
+            datetime(2026, 3, 10), datetime(2026, 4, 10), datetime(2026, 3, 13),
+        )
+
+        expected_keys = {
+            "messages", "sessions", "output_tokens", "period_cost",
+            "alltime_cost", "model_usage", "daily_messages",
+            "first_session", "total_messages", "total_sessions",
+            "tool_calls", "spark_data",
+        }
+        assert set(stats.keys()) == expected_keys
+
+    def test_total_messages_and_sessions(self, tmp_path):
+        """total_messages and total_sessions cover all entries."""
+        lines = [
+            self._make_entry("2026-03-11T10:00:00Z", node_id="n1"),
+            self._make_entry("2025-06-15T10:00:00Z", node_id="n2"),
+            self._make_entry("2026-03-12T10:00:00Z", node_id="n1"),
+        ]
+        usage_file = tmp_path / "usage.jsonl"
+        usage_file.write_text("\n".join(lines) + "\n")
+
+        collector = ApiUsageCollector("openrouter", "OpenRouter", usage_file=str(usage_file))
+        stats = collector.get_stats(
+            datetime(2026, 3, 10), datetime(2026, 4, 10), datetime(2026, 3, 13),
+        )
+
+        assert stats is not None
+        assert stats["total_messages"] == 3
+        assert stats["total_sessions"] == 2  # n1 and n2
+
+
+class TestApiUsageCollectorPlanInfo:
+    """get_plan_info returns pay-as-you-go details."""
+
+    def test_pay_as_you_go_defaults(self):
+        info = ApiUsageCollector("openrouter", "OpenRouter").get_plan_info({})
+        assert info["plan_name"] == "pay-as-you-go"
+        assert info["plan_price"] == 0
+        assert info["interval"] == "mo"
+        assert info["billing_day"] == 1
+
+    def test_billing_day_from_config(self):
+        info = ApiUsageCollector("openrouter", "OpenRouter").get_plan_info({"billing_day": 15})
+        assert info["billing_day"] == 15
