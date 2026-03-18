@@ -31,10 +31,10 @@ def assert_snapshot(output, name):
     path = _snapshot_path(name)
     if not os.path.exists(path):
         os.makedirs(SNAPSHOT_DIR, exist_ok=True)
-        with open(path, "w") as f:
+        with open(path, "w", encoding="utf-8") as f:
             f.write(output)
         return  # First run creates the snapshot
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         expected = f.read()
     assert output == expected, (
         "Snapshot mismatch for {name}. "

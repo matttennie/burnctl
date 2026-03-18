@@ -1691,10 +1691,8 @@ class TestCodexGetStatsEdgeCases:
 
 from burnctl.collectors.api_usage import (
     ApiUsageCollector,
-    _parse_ts,
+    _parse_ts as _parse_ts_api,
     _parse_entry,
-    _load_entries,
-    USAGE_FILE,
 )
 
 
@@ -1702,7 +1700,7 @@ class TestApiUsageParseTs:
     """Verify _parse_ts() handles various timestamp formats."""
 
     def test_iso8601_with_z_suffix(self):
-        result = _parse_ts("2026-03-17T14:30:00.000Z")
+        result = _parse_ts_api("2026-03-17T14:30:00.000Z")
         assert result is not None
         assert result.year == 2026
         assert result.month == 3
@@ -1712,7 +1710,7 @@ class TestApiUsageParseTs:
         assert result.tzinfo is None  # naive after stripping
 
     def test_iso8601_with_offset(self):
-        result = _parse_ts("2026-03-17T14:30:00+00:00")
+        result = _parse_ts_api("2026-03-17T14:30:00+00:00")
         assert result is not None
         assert result.year == 2026
         assert result.month == 3
@@ -1720,16 +1718,16 @@ class TestApiUsageParseTs:
         assert result.tzinfo is None
 
     def test_returns_none_for_empty_string(self):
-        assert _parse_ts("") is None
+        assert _parse_ts_api("") is None
 
     def test_returns_none_for_none(self):
-        assert _parse_ts(None) is None
+        assert _parse_ts_api(None) is None
 
     def test_returns_none_for_non_string(self):
-        assert _parse_ts(12345) is None
+        assert _parse_ts_api(12345) is None
 
     def test_returns_none_for_invalid_date_string(self):
-        assert _parse_ts("not-a-date") is None
+        assert _parse_ts_api("not-a-date") is None
 
 
 class TestApiUsageParseEntry:

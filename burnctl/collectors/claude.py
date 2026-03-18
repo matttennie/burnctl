@@ -305,13 +305,14 @@ class ClaudeCollector(BaseCollector):
         default (``max5x`` with a stderr warning).
         """
         env_plan = os.environ.get("CLAUDE_PLAN", "").lower()
-        if env_plan and env_plan in PLAN_PRICES:
+        from_env = env_plan and env_plan in PLAN_PRICES
+        if from_env:
             plan = env_plan
         else:
             plan = config.get("claude_plan", "max5x")
 
         # Warn if using the default and the user never set it
-        if plan == "max5x" and not config.get("_claude_plan_set"):
+        if plan == "max5x" and not from_env and not config.get("_claude_plan_set"):
             cfg_file = os.path.join(
                 os.path.expanduser("~"), ".config", "burnctl", "config.json",
             )
