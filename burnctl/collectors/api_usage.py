@@ -168,8 +168,8 @@ class ApiUsageCollector(BaseCollector):
         period_messages = 0
         period_output_tokens = 0
         period_cost = 0.0
-        period_model_usage = {}
-        daily_messages = {}
+        period_model_usage: dict = {}
+        daily_messages: dict = {}
         period_node_ids = set()
 
         # ── All-time accumulators ──
