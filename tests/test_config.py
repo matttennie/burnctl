@@ -35,7 +35,6 @@ class TestConstants:
             "no_color",
             "simple",
             "compact",
-            "no_activity",
             "claude_plan",
             "gemini_plan",
             "codex_plan",

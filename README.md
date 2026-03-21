@@ -2,7 +2,7 @@
 
 Unified CLI dashboard for AI coding agent usage and costs.
 
-Aggregates usage data from multiple AI coding agents into a single terminal report — messages, sessions, tokens, estimated API costs, value ratios, model breakdowns, and daily activity sparklines.
+Aggregates usage data from multiple AI coding agents into a single terminal report — sessions, tokens, estimated API costs, value ratios, and model breakdowns.
 
 ## Supported Agents
 
@@ -46,7 +46,6 @@ burnctl -e out.csv  # Export to specific file
 
 # Display options
 burnctl -s              # Simple (skip VALUE & ROI section)
-burnctl --no-activity   # Hide daily activity section
 burnctl -n              # No color
 burnctl -t classic      # Theme: gradient, classic, colorblind, accessible
 
@@ -70,7 +69,7 @@ burnctl config claude_plan max5x  # Set Claude plan
 burnctl config theme colorblind   # Set color theme
 ```
 
-Available settings: `billing_day`, `billing_interval`, `claude_plan`, `default_agents`, `theme`, `no_color`, `simple`, `compact`, `no_activity`.
+Available settings: `billing_day`, `billing_interval`, `claude_plan`, `default_agents`, `theme`, `no_color`, `simple`, `compact`.
 
 ## Upgrade
 

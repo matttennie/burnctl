@@ -30,16 +30,7 @@
           "outputTokens": 1034712
         }
       },
-      "daily_messages": {
-        "2026-03-11": 965,
-        "2026-03-12": 966
-      },
-      "spark_data": [
-        0,
-        965,
-        966,
-        0
-      ],
+      "input_tokens": null,
       "first_session": "2026-01-10",
       "total_messages": 29328,
       "total_sessions": 95
@@ -70,25 +61,7 @@
           "outputTokens": 45000
         }
       },
-      "daily_messages": {
-        "2026-03-11": 10,
-        "2026-03-12": 8
-      },
-      "spark_data": [
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        10,
-        8,
-        0
-      ],
+      "input_tokens": 100000,
       "first_session": "2026-02-12",
       "total_messages": 57,
       "total_sessions": 18

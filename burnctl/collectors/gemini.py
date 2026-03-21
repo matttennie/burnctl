@@ -52,10 +52,10 @@ class GeminiCollector(BaseCollector):
         # Period and all-time accumulators
         p_messages = 0
         p_sessions = 0
+        p_input_tokens = 0
         p_output_tokens = 0
         p_cost = 0.0
         p_tool_calls = 0
-        p_daily = {}  # type: dict
         p_model_usage = {}  # type: dict
 
         a_messages = 0
@@ -121,13 +121,14 @@ class GeminiCollector(BaseCollector):
                     msg_date = msg_ts.strftime("%Y-%m-%d") if msg_ts else session_date
 
                     if start_str <= msg_date < end_str:
+                        p_input_tokens += non_cached
                         p_output_tokens += out
                         p_cost += cost
 
                         # Model usage
                         if model not in p_model_usage:
                             p_model_usage[model] = {"inputTokens": 0, "outputTokens": 0, "cachedTokens": 0}
-                        p_model_usage[model]["inputTokens"] += inp
+                        p_model_usage[model]["inputTokens"] += non_cached
                         p_model_usage[model]["outputTokens"] += out
                         p_model_usage[model]["cachedTokens"] += cached
 
@@ -149,7 +150,6 @@ class GeminiCollector(BaseCollector):
                         msg_date = msg_ts.strftime("%Y-%m-%d") if msg_ts else session_date
                         if start_str <= msg_date < end_str:
                             p_messages += 1
-                            p_daily[msg_date] = p_daily.get(msg_date, 0) + 1
 
         if a_sessions == 0:
             return None
@@ -157,11 +157,11 @@ class GeminiCollector(BaseCollector):
         return {
             "messages": p_messages,
             "sessions": p_sessions,
+            "input_tokens": p_input_tokens,
             "output_tokens": p_output_tokens,
             "period_cost": p_cost,
             "alltime_cost": a_cost,
             "model_usage": p_model_usage,
-            "daily_messages": p_daily,
             "first_session": first_session or "",
             "total_messages": a_messages,
             "total_sessions": a_sessions,

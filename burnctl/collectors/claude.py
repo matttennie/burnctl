@@ -7,6 +7,7 @@ is before today), raw session JSONL files are scanned to fill the gap.
 
 import json
 import os
+import re
 import sys
 from collections import defaultdict
 from datetime import datetime, timedelta
@@ -24,9 +25,18 @@ def _default_pricing():
     return {"input": 5.0, "output": 25.0, "cache_read": 0.50, "cache_create": 6.25}
 
 
+def _lookup_pricing(model, pricing_table):
+    """Look up pricing for *model*, stripping date suffixes if needed."""
+    if model in pricing_table:
+        return pricing_table[model]
+    # Try stripping a trailing date suffix like -20250929 or -20251101
+    stripped = re.sub(r'-\d{8}$', '', model)
+    return pricing_table.get(stripped, _default_pricing())
+
+
 def _cost_for_model(model, usage, pricing_table):
     """Compute all-time cost for a single model's cumulative token usage."""
-    pricing = pricing_table.get(model, _default_pricing())
+    pricing = _lookup_pricing(model, pricing_table)
     return (
         usage.get("inputTokens", 0) * pricing["input"] / 1_000_000
         + usage.get("outputTokens", 0) * pricing["output"] / 1_000_000
@@ -245,52 +255,65 @@ class ClaudeCollector(BaseCollector):
         period_tools = sum(d.get("toolCallCount", 0) for d in daily)
 
         period_output_tokens = 0
-        period_cost = 0.0
         period_model_usage = {}  # type: dict
         for entry in daily_tokens:
             for model, out_tokens in entry.get("tokensByModel", {}).items():
                 period_output_tokens += out_tokens
-                model_pricing = pricing_table.get(model, _default_pricing())
-                period_cost += out_tokens * model_pricing["output"] / 1_000_000
                 bucket = period_model_usage.setdefault(
                     model, {"outputTokens": 0},
                 )
                 bucket["outputTokens"] += out_tokens
 
+        # Compute period cost using effective per-output-token rate that
+        # accounts for input + cache costs (derived from all-time ratios).
+        alltime_model_usage = data.get("modelUsage", {})
+        period_cost = 0.0
+        for model, bucket in period_model_usage.items():
+            out_tok = bucket["outputTokens"]
+            at_usage = alltime_model_usage.get(model)
+            if at_usage and at_usage.get("outputTokens", 0) > 0:
+                # Derive effective rate from all-time data
+                at_cost = _cost_for_model(model, at_usage, pricing_table)
+                at_out = at_usage["outputTokens"]
+                effective_rate = at_cost / at_out * 1_000_000
+            else:
+                # Fall back to raw output-only pricing
+                model_pricing = _lookup_pricing(model, pricing_table)
+                effective_rate = model_pricing["output"]
+            period_cost += out_tok * effective_rate / 1_000_000
+
         # All-time cost across every model
         alltime_cost = sum(
             _cost_for_model(m, u, pricing_table)
-            for m, u in data.get("modelUsage", {}).items()
+            for m, u in alltime_model_usage.items()
         )
 
-        # Daily message map (date string -> count)
-        daily_messages = {
-            d.get("date", ""): d.get("messageCount", 0)
-            for d in daily
-        }
-
-        # Spark data: one entry per elapsed day
-        days_elapsed = min((ref_date - start).days, (end - start).days)
-        spark_data = []
-        for i in range(days_elapsed + 1):
-            day_str = (start + timedelta(days=i)).strftime("%Y-%m-%d")
-            spark_data.append(daily_messages.get(day_str, 0))
-
         first_session = data.get("firstSessionDate", "")[:10]
+
+        # Estimate period input tokens from all-time input/output ratio
+        period_input_tokens = 0
+        for model, bucket in period_model_usage.items():
+            out_tok = bucket["outputTokens"]
+            at_usage = alltime_model_usage.get(model)
+            if at_usage and at_usage.get("outputTokens", 0) > 0:
+                at_in = at_usage.get("inputTokens", 0)
+                at_out = at_usage["outputTokens"]
+                est_in = int(out_tok * at_in / at_out)
+                bucket["inputTokens"] = est_in
+                period_input_tokens += est_in
 
         return {
             "messages": period_messages,
             "sessions": period_sessions,
+            "input_tokens": period_input_tokens if period_model_usage else None,
             "output_tokens": period_output_tokens,
             "period_cost": period_cost,
             "alltime_cost": alltime_cost,
             "model_usage": period_model_usage,
-            "daily_messages": daily_messages,
             "first_session": first_session,
             "total_messages": data.get("totalMessages", 0),
             "total_sessions": data.get("totalSessions", 0),
             "tool_calls": period_tools,
-            "spark_data": spark_data,
         }
 
     # ── Plan / billing helpers ───────────────────────────────────

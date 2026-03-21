@@ -135,17 +135,6 @@ class TestClaudeIntegration:
         assert "claude-opus-4-6" in stats["model_usage"]
         assert stats["model_usage"]["claude-opus-4-6"]["outputTokens"] == 185081
 
-        # Spark data: one entry per elapsed day (days 0..3 inclusive)
-        days_elapsed = min(
-            (ref_date - start).days,
-            (end - start).days,
-        )
-        assert len(stats["spark_data"]) == days_elapsed + 1
-
-        # Daily messages map
-        assert stats["daily_messages"]["2026-03-11"] == 965
-        assert stats["daily_messages"]["2026-03-12"] == 966
-
         # Tool calls: 200 + 261 = 461
         assert stats["tool_calls"] == 461
 
@@ -178,7 +167,7 @@ class TestClaudeIntegration:
         assert 40 < stats["alltime_cost"] < 55
 
     def test_period_cost_uses_output_pricing(self, tmp_path):
-        """Period cost is based on daily output tokens * model output rate."""
+        """Period cost uses effective rate derived from alltime data."""
         fpath = self._write_fixture(tmp_path)
 
         with patch("burnctl.collectors.claude.STATS_FILE", fpath):
@@ -188,8 +177,9 @@ class TestClaudeIntegration:
                 datetime(2026, 3, 13),
             )
 
-        # 185081 tokens * $25/1M = $4.627
-        assert 4.0 < stats["period_cost"] < 5.0
+        # 185081 output tokens at effective rate (includes input + cache costs)
+        # Effective rate is higher than raw output rate of $25/M
+        assert 4.0 < stats["period_cost"] < 8.0
 
 
 # ── 2. Gemini collector with realistic session files ─────────────────
@@ -333,10 +323,7 @@ class TestGeminiIntegration:
         assert "gemini-2.5-flash" in stats["model_usage"]
         model = stats["model_usage"]["gemini-2.5-flash"]
         assert model["outputTokens"] == 239
-        assert model["inputTokens"] == 8797 + 9000
-
-        # Daily messages: 2 messages on 2026-03-11
-        assert stats["daily_messages"].get("2026-03-11") == 2
+        assert model["inputTokens"] == 8797 + 8900  # non-cached only
 
         # All-time: 2 sessions total, 3 user messages total
         assert stats["total_sessions"] == 2
@@ -476,7 +463,7 @@ class TestCodexIntegration:
         assert "gpt-5.3-codex" in stats["model_usage"]
         model_u = stats["model_usage"]["gpt-5.3-codex"]
         assert model_u["outputTokens"] == 158
-        assert model_u["inputTokens"] == 9246
+        assert model_u["inputTokens"] == 1694  # non-cached only (9246 - 7552)
 
         # Period cost > 0
         assert stats["period_cost"] > 0
@@ -683,23 +670,12 @@ class TestApiUsageIntegration:
         assert opus["inputTokens"] == 1500 + 1000
         assert opus["outputTokens"] == 800 + 600
 
-        # Daily messages (openrouter only)
-        assert stats["daily_messages"]["2026-03-11"] == 1
-        assert stats["daily_messages"]["2026-03-12"] == 1
-
         # First session: earliest openrouter entry across all time
         assert stats["first_session"] == "2025-06-15"
 
         # Totals (openrouter only)
         assert stats["total_messages"] == 3
         assert stats["total_sessions"] == 2  # node-abc, node-old
-
-        # Spark data length
-        days_elapsed = min(
-            (ref_date - start).days,
-            (end - start).days,
-        )
-        assert len(stats["spark_data"]) == days_elapsed + 1
 
     def test_period_vs_alltime(self, tmp_path):
         """alltime_cost includes out-of-period entry."""
@@ -824,6 +800,7 @@ def _make_fake_stats(
     return {
         "messages": messages,
         "sessions": sessions,
+        "input_tokens": 25000,
         "output_tokens": output_tokens,
         "period_cost": period_cost,
         "alltime_cost": alltime_cost,
@@ -833,12 +810,10 @@ def _make_fake_stats(
                 "outputTokens": output_tokens,
             },
         },
-        "daily_messages": {"2026-03-11": 50, "2026-03-12": 50},
         "first_session": "2026-01-01",
         "total_messages": 1000,
         "total_sessions": 50,
         "tool_calls": 200,
-        "spark_data": [10, 20, 30, 50],
     }
 
 

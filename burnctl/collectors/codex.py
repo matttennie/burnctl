@@ -242,6 +242,7 @@ class CodexCollector(BaseCollector):
         # Period accumulators
         period_messages = 0
         period_sessions = 0
+        period_input_tokens = 0
         period_output_tokens = 0
         period_cost = 0.0
         period_tool_calls = 0
@@ -302,6 +303,9 @@ class CodexCollector(BaseCollector):
                 if token_usage:
                     out_tok = token_usage.get("output_tokens", 0)
                     in_tok = token_usage.get("input_tokens", 0)
+                    cached_in = token_usage.get("cached_input_tokens", 0)
+                    non_cached_in = max(in_tok - cached_in, 0)
+                    period_input_tokens += non_cached_in
                     period_output_tokens += out_tok
                     period_cost += _compute_session_cost(
                         token_usage, model_pricing,
@@ -312,7 +316,7 @@ class CodexCollector(BaseCollector):
                             primary_model,
                             {"inputTokens": 0, "outputTokens": 0},
                         )
-                        bucket["inputTokens"] += in_tok
+                        bucket["inputTokens"] += non_cached_in
                         bucket["outputTokens"] += out_tok
 
             # Count user messages per day
@@ -336,15 +340,6 @@ class CodexCollector(BaseCollector):
         if hist_sessions > alltime_sessions:
             alltime_sessions = hist_sessions
 
-        # Spark data: one entry per elapsed day
-        days_elapsed = min(
-            (ref_date - start).days, (end - start).days,
-        )
-        spark_data = []
-        for i in range(days_elapsed + 1):
-            day_str = (start + timedelta(days=i)).strftime("%Y-%m-%d")
-            spark_data.append(daily_messages.get(day_str, 0))
-
         first_session = (
             _date_str(first_session_dt) if first_session_dt else ""
         )
@@ -352,16 +347,15 @@ class CodexCollector(BaseCollector):
         return {
             "messages": period_messages,
             "sessions": period_sessions,
+            "input_tokens": period_input_tokens,
             "output_tokens": period_output_tokens,
             "period_cost": period_cost,
             "alltime_cost": alltime_cost,
             "model_usage": period_model_usage,
-            "daily_messages": daily_messages,
             "first_session": first_session,
             "total_messages": alltime_messages,
             "total_sessions": alltime_sessions,
             "tool_calls": period_tool_calls,
-            "spark_data": spark_data,
         }
 
     # -- History helper ------------------------------------------------

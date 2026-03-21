@@ -402,7 +402,7 @@ def aggregate_stats(
                 # Agent detected but no activity in this period
                 total_days = (end - start).days
                 days_elapsed = min(
-                    (ref_date - start).days, total_days,
+                    (ref_date.date() - start.date()).days, total_days,
                 )
                 agents.append({
                     "id": collector.id,
@@ -419,14 +419,13 @@ def aggregate_stats(
                     "projected_cost": 0.0,
                     "messages": 0,
                     "sessions": 0,
+                    "input_tokens": 0,
                     "output_tokens": 0,
                     "tool_calls": 0,
                     "period_cost": 0.0,
                     "alltime_cost": 0.0,
                     "value_ratio": 0.0,
                     "model_usage": {},
-                    "daily_messages": {},
-                    "spark_data": [],
                     "first_session": "",
                     "total_messages": 0,
                     "total_sessions": 0,
@@ -435,7 +434,8 @@ def aggregate_stats(
             continue
 
         total_days = (end - start).days
-        days_elapsed = min((ref_date - start).days, total_days)
+        # Use date-only math to avoid sub-day drift between datetime.now() calls
+        days_elapsed = min((ref_date.date() - start.date()).days, total_days)
         days_remaining = total_days - days_elapsed
 
         period_cost = stats.get("period_cost", 0.0)
@@ -485,14 +485,13 @@ def aggregate_stats(
             "projected_cost": round(projected_cost, 2),
             "messages": stats.get("messages", 0),
             "sessions": stats.get("sessions", 0),
+            "input_tokens": stats.get("input_tokens"),
             "output_tokens": stats.get("output_tokens", 0),
             "tool_calls": stats.get("tool_calls", 0),
             "period_cost": round(period_cost, 2),
             "alltime_cost": round(alltime_cost, 2),
             "value_ratio": round(value_ratio, 1),
             "model_usage": stats.get("model_usage", {}),
-            "daily_messages": stats.get("daily_messages", {}),
-            "spark_data": stats.get("spark_data", []),
             "first_session": first_session,
             "total_messages": stats.get("total_messages", 0),
             "total_sessions": stats.get("total_sessions", 0),
@@ -520,16 +519,13 @@ def fmt_usd(n):
     return f"${n:,.2f}"
 
 
-def sparkline(values):
-    """Unicode sparkline from a list of numeric values."""
-    if not values:
-        return ""
-    blocks = " \u2581\u2582\u2583\u2584\u2585\u2586\u2587\u2588"
-    mn, mx = min(values), max(values)
-    rng = mx - mn if mx != mn else 1
-    return "".join(
-        blocks[min(8, int((v - mn) / rng * 8))] for v in values
-    )
+def fmt_short(n):
+    """Compact number: 1,234 → 1.2K, 1,234,567 → 1.2M."""
+    if n >= 1_000_000:
+        return f"{n / 1_000_000:.1f}M"
+    if n >= 1_000:
+        return f"{n / 1_000:.1f}K"
+    return str(n)
 
 
 def _strip_ansi(text):
@@ -537,11 +533,11 @@ def _strip_ansi(text):
     return _ANSI_RE.sub("", text)
 
 
+
 # ── Full multi-column renderer ──────────────────────────────────────
 
 
-def render_full(stats, simple=False, use_color=True, theme="gradient",
-                no_activity=False):
+def render_full(stats, simple=False, use_color=True, theme="gradient"):
     """Multi-column box report.
 
     Parameters
@@ -702,48 +698,22 @@ def render_full(stats, simple=False, use_color=True, theme="gradient",
     )
     lines.append(box_empty())
 
-    # ── Pace bars ──
-    pace_bar_w = max(8, col_w - 6)  # leave room for percentage label
-    pace_cells = []
-    pace_raw_cells = []
-    for a in agents:
-        if a["plan_price"] == 0:
-            na_str = "N/A".rjust(pace_bar_w + 4)
-            pace_cells.append(th.muted(na_str))
-            pace_raw_cells.append(na_str)
-            continue
-        raw_pct = a["pace_pct"]
-        if math.isnan(raw_pct) or math.isinf(raw_pct):
-            raw_pct = 0.0
-        pct = min(raw_pct, 100)
-        filled = int(pace_bar_w * pct / 100)
-        empty = pace_bar_w - filled
-        pct_label = f" {pct:.0f}%"
-        bar = th.agent_progress_bar(filled, empty, pace_bar_w, a.get("id", ""))
-        pace_cells.append(f"{bar}{th.bold(pct_label)}")
-        pace_raw_cells.append(
-            "\u2588" * filled + "\u2591" * empty + pct_label,
-        )
-
-    label_str = th.muted(f"{'Pace':<{label_w}}")
-    cols = ("  ").join(
-        c.rjust(col_w + len(c) - len(r))
-        for c, r in zip(pace_cells, pace_raw_cells)
-    )
-    raw = f"{'Pace':<{label_w}}" + ("  ").join(
-        r.rjust(col_w) for r in pace_raw_cells
-    )
-    lines.append(box_line(f"{label_str}{cols}", raw_len=len(raw)))
-
     # ── PERIOD USAGE ──
     lines.append(box_sep_light())
     lines.append(box_title("PERIOD USAGE"))
     lines.append(box_empty())
     lines.append(
-        _row_bold("Messages", [fmt(a["messages"]) for a in agents]),
+        _row_bold("Sessions", [fmt(a["sessions"]) for a in agents]),
     )
     lines.append(
-        _row_bold("Sessions", [fmt(a["sessions"]) for a in agents]),
+        _row_bold(
+            "Input Tokens",
+            [
+                "N/A" if a["input_tokens"] is None
+                else fmt(a["input_tokens"])
+                for a in agents
+            ],
+        ),
     )
     lines.append(
         _row_bold(
@@ -757,7 +727,6 @@ def render_full(stats, simple=False, use_color=True, theme="gradient",
             [fmt_usd(a["period_cost"]) for a in agents],
         ),
     )
-
     # System total (only if more than one agent)
     if num_agents > 1:
         lines.append(box_empty())
@@ -791,20 +760,48 @@ def render_full(stats, simple=False, use_color=True, theme="gradient",
                 [fmt_usd(a["alltime_cost"]) for a in agents],
             ),
         )
-        lines.append(
-            _row_bold(
-                "Value Ratio",
-                [
-                    "N/A" if a["plan_price"] == 0
-                    else f"{a['value_ratio']:.1f}x"
-                    for a in agents
-                ],
-            ),
+        # Value ratio bars
+        vr_bar_w = max(8, col_w - 6)
+        vr_cells = []
+        vr_raw_cells = []
+        for a in agents:
+            if a["plan_price"] == 0:
+                na_str = "N/A".rjust(vr_bar_w + 4)
+                vr_cells.append(th.muted(na_str))
+                vr_raw_cells.append(na_str)
+                continue
+            vr = a["value_ratio"]
+            if math.isnan(vr) or math.isinf(vr):
+                nan_str = "N/A".rjust(vr_bar_w + 4)
+                vr_cells.append(th.muted(nan_str))
+                vr_raw_cells.append(nan_str)
+                continue
+            # Scale bar: 1x = empty, 10x = full
+            fill_frac = min(vr / 10.0, 1.0)
+            filled = int(vr_bar_w * fill_frac)
+            empty = vr_bar_w - filled
+            vr_label = f" {vr:.1f}x"
+            bar = th.agent_progress_bar(filled, empty, vr_bar_w, a.get("id", ""))
+            vr_cells.append(f"{bar}{th.bold(vr_label)}")
+            vr_raw_cells.append(
+                "\u2588" * filled + "\u2591" * empty + vr_label,
+            )
+
+        label_str = th.muted(f"{'Value Ratio':<{label_w}}")
+        cols = ("  ").join(
+            c.rjust(col_w + len(c) - len(r))
+            for c, r in zip(vr_cells, vr_raw_cells)
         )
+        raw = f"{'Value Ratio':<{label_w}}" + ("  ").join(
+            r.rjust(col_w) for r in vr_raw_cells
+        )
+        lines.append(box_line(f"{label_str}{cols}", raw_len=len(raw)))
 
     # ── MODEL BREAKDOWN ──
     agents_with_models = [a for a in agents if a.get("model_usage")]
     if agents_with_models:
+        from burnctl.pricing import get_agent_pricing
+
         lines.append(box_sep_light())
         lines.append(box_title("MODEL BREAKDOWN"))
         lines.append(box_empty())
@@ -817,9 +814,12 @@ def render_full(stats, simple=False, use_color=True, theme="gradient",
                 ),
             )
             model_usage = a["model_usage"]
+            agent_pricing = get_agent_pricing(a.get("id", "")) or {}
             total_out = sum(
                 u.get("outputTokens", 0) for u in model_usage.values()
             )
+            _CH_FILL = "\u2593"
+            _CH_EMPTY = "\u2591"
             for model, usage in model_usage.items():
                 # Shorten model name for display
                 short = model
@@ -827,92 +827,51 @@ def render_full(stats, simple=False, use_color=True, theme="gradient",
                     short = short.replace(prefix, "")
                 short = re.sub(r"-(\d{8}|latest)$", "", short)
 
+                inp = usage.get("inputTokens", 0)
                 out = usage.get("outputTokens", 0)
                 pct = int(out * 100 / total_out) if total_out else 0
                 pct_label = "<1%" if pct == 0 and out > 0 else "%d%%" % pct
 
-                mini_w = min(12, col_w - 2)
+                mini_w = 8
                 mini_filled = int(mini_w * pct / 100)
                 mini_empty = mini_w - mini_filled
-                bar = th.agent_model_bar(mini_filled, mini_empty, short, a.get("id", ""))
-
+                bar = th.agent_model_bar(
+                    mini_filled, mini_empty, short, a.get("id", ""),
+                )
                 fill_chars = _CH_FILL * mini_filled
                 empty_chars = _CH_EMPTY * mini_empty
+
+                # Look up pricing (try exact, then strip date suffix)
+                mp = agent_pricing.get(model)
+                if mp is None:
+                    stripped = re.sub(r'-\d{8}$', '', model)
+                    mp = agent_pricing.get(stripped, {})
+                in_rate = mp.get("input", 0)
+                out_rate = mp.get("output", 0)
+                in_p = f"${in_rate:g}/M"
+                out_p = f"${out_rate:g}/M"
+
+                # Compact layout: name bar pct  In: NNN $X/M  Out: NNN $X/M
+                in_s = fmt_short(inp)
+                out_s = fmt_short(out)
                 detail = (
-                    f"    {short:<16}"
+                    f"    {short:<14}"
                     + fill_chars + empty_chars
-                    + f" {pct_label}  {fmt(out)} tok"
+                    + f" {pct_label:>4}"
+                    + f"  In:{in_s:>6} {in_p:>6}"
+                    + f"  Out:{out_s:>6} {out_p:>6}"
                 )
                 detail_styled = (
-                    f"    {th.muted(f'{short:<16}')}{bar}"
-                    f" {pct_label}  {th.muted(f'{fmt(out)} tok')}"
+                    f"    {th.muted(f'{short:<14}')}{bar}"
+                    f" {pct_label:>4}"
+                    f"  {th.muted('In:')}{in_s:>6} {th.muted(in_p):>6}"
+                    f"  {th.muted('Out:')}{out_s:>6} {th.muted(out_p):>6}"
                 )
                 lines.append(
                     box_line(detail_styled, raw_len=len(detail)),
                 )
             lines.append(box_empty())
 
-    # ── DAILY ACTIVITY ──
-    if no_activity:
-        lines.append(box_bottom())
-        today_str = stats["today"]
-        lines.append(f"  {th.muted(f'Generated: {today_str}')}")
-        lines.append("")
-        return "\n".join(lines)
-
-    lines.append(box_sep_light())
-    lines.append(box_title("DAILY ACTIVITY"))
-    lines.append(box_line(f"  {th.muted('Messages per day')}", raw_len=len("  Messages per day")))
-    lines.append(box_empty())
-
-    # Global max so bars are comparable across agents
-    global_max = 0  # type: int | float
-    for a in agents:
-        dm = a.get("daily_messages", {})
-        if not isinstance(dm, dict):
-            continue
-        for c in dm.values():
-            if (isinstance(c, (int, float))
-                    and math.isfinite(c) and c > global_max):
-                global_max = c
-    global_max = max(global_max, 1)
-
-    # Bar area: inner_w minus indent(4) minus date(5) minus gap(2) minus count+label(12)
-    bar_max = max(8, inner_w - 4 - 5 - 2 - 12)
-
-    for a in agents:
-        dm = a.get("daily_messages", {})
-        if not isinstance(dm, dict):
-            dm = {}
-        active_days = sorted(
-            (d, c) for d, c in dm.items()
-            if isinstance(c, (int, float)) and math.isfinite(c) and c > 0
-        )
-        if not active_days:
-            continue
-
-        lines.append(
-            box_line(
-                f"  {th.agent_name(a['name'], a.get('id', ''))}",
-                raw_len=len(f"  {a['name']}"),
-            ),
-        )
-
-        for day, count in active_days:
-            short_date = day[5:]  # "MM-DD"
-            bar_len = max(1, int(bar_max * count / global_max))
-            bar = _CH_FILL * bar_len
-            count_str = fmt(count)
-            label = "%s msgs" % count_str
-            raw = f"    {short_date}  {bar} {label}"
-            styled = (
-                f"    {th.muted(short_date)}  "
-                f"{th.agent_bar(bar, a.get('id', ''))} {th.bold(count_str)}"
-                f" {th.muted('msgs')}"
-            )
-            lines.append(box_line(styled, raw_len=len(raw)))
-
-        lines.append(box_empty())
     lines.append(box_bottom())
 
     # Footer
@@ -930,8 +889,9 @@ def _diff_str(cur, prev, is_usd=False):
     """Format a delta value as ``+X`` / ``-X`` with sign."""
     delta = cur - prev
     if is_usd:
-        sign = "+" if delta >= 0 else ""
-        return "%s$%.2f" % (sign, delta)
+        if delta >= 0:
+            return "+$%.2f" % delta
+        return "-$%.2f" % abs(delta)
     sign = "+" if delta >= 0 else ""
     return "%s%s" % (sign, fmt(delta))
 
@@ -976,8 +936,8 @@ def render_diff(current, previous):
         lines.append("")
 
         metrics = [
-            ("Messages", "messages", False),
             ("Sessions", "sessions", False),
+            ("Input Tokens", "input_tokens", False),
             ("Output Tokens", "output_tokens", False),
             ("Tool Calls", "tool_calls", False),
             ("Est. API Cost", "period_cost", True),
@@ -989,6 +949,13 @@ def render_diff(current, previous):
         for label, key, is_usd in metrics:
             c = cur.get(key, 0) if cur else 0
             p = prev.get(key, 0) if prev else 0
+            if c is None and p is None:
+                lines.append(
+                    f"    {label:<16} {'N/A':>10}  {'N/A':>10}  {'N/A':>10}",
+                )
+                continue
+            c = c if c is not None else 0
+            p = p if p is not None else 0
             if is_usd:
                 c_str = fmt_usd(c)
                 p_str = fmt_usd(p)
@@ -1056,16 +1023,11 @@ def render_accessible(stats):
         lines.append(
             f"  Days remaining: {a['days_remaining']} of {a['total_days']}",
         )
-        if a["plan_price"] > 0:
-            lines.append(
-                f"  Pace: {a['pace_pct']:.0f} percent of plan value used",
-            )
-            if a["projected_cost"] > 0:
-                lines.append(
-                    f"  Projected period cost: {fmt_usd(a['projected_cost'])}",
-                )
-        lines.append(f"  Messages: {fmt(a['messages'])}")
         lines.append(f"  Sessions: {fmt(a['sessions'])}")
+        in_tok = a.get("input_tokens")
+        lines.append(
+            f"  Input tokens: {'N/A' if in_tok is None else fmt(in_tok)}"
+        )
         lines.append(f"  Output tokens: {fmt(a['output_tokens'])}")
         lines.append(f"  Tool calls: {fmt(a['tool_calls'])}")
         lines.append(

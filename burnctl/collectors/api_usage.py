@@ -166,10 +166,10 @@ class ApiUsageCollector(BaseCollector):
 
         # ── Period accumulators ──
         period_messages = 0
+        period_input_tokens = 0
         period_output_tokens = 0
         period_cost = 0.0
         period_model_usage: dict = {}
-        daily_messages: dict = {}
         period_node_ids = set()
 
         # ── All-time accumulators ──
@@ -191,6 +191,7 @@ class ApiUsageCollector(BaseCollector):
             # ── Period filtering ──
             if start <= ts < end:
                 period_messages += 1
+                period_input_tokens += entry["input_tokens"]
                 period_output_tokens += entry["output_tokens"]
                 period_cost += entry["cost"]
                 period_node_ids.add(entry["node_id"])
@@ -203,38 +204,26 @@ class ApiUsageCollector(BaseCollector):
                 bucket["inputTokens"] += entry["input_tokens"]
                 bucket["outputTokens"] += entry["output_tokens"]
 
-                # Daily messages
-                day_str = ts.strftime("%Y-%m-%d")
-                daily_messages[day_str] = daily_messages.get(day_str, 0) + 1
-
         if alltime_messages == 0:
             return None
 
         # Sessions = distinct node IDs active in the period
         period_sessions = len(period_node_ids)
 
-        # Spark data: one entry per elapsed day
-        days_elapsed = min((ref_date - start).days, (end - start).days)
-        spark_data = []
-        for i in range(days_elapsed + 1):
-            day_str = (start + timedelta(days=i)).strftime("%Y-%m-%d")
-            spark_data.append(daily_messages.get(day_str, 0))
-
         first_session = first_ts.strftime("%Y-%m-%d") if first_ts else ""
 
         return {
             "messages": period_messages,
             "sessions": period_sessions,
+            "input_tokens": period_input_tokens,
             "output_tokens": period_output_tokens,
             "period_cost": period_cost,
             "alltime_cost": alltime_cost,
             "model_usage": period_model_usage,
-            "daily_messages": daily_messages,
             "first_session": first_session,
             "total_messages": alltime_messages,
             "total_sessions": len(alltime_node_ids),
             "tool_calls": 0,
-            "spark_data": spark_data,
         }
 
     def get_upgrade_url(self):

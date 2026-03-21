@@ -39,7 +39,7 @@ class FakeCollector(BaseCollector):
             "period_cost": 1.50,
             "alltime_cost": 10.00,
             "model_usage": {},
-            "daily_messages": {},
+            "input_tokens": 2500,
             "first_session": None,
             "total_messages": 100,
             "total_sessions": 20,
@@ -310,7 +310,6 @@ class TestMergeConfig:
             no_color=False,
             simple=False,
             compact=False,
-            no_activity=False,
         )
         defaults.update(overrides)
         return argparse.Namespace(**defaults)
@@ -713,7 +712,6 @@ class TestRenderReport:
             simple=False,
             use_color=True,
             theme="gradient",
-            no_activity=False,
         )
         assert result == "full report"
 
@@ -732,7 +730,6 @@ class TestRenderReport:
             simple=True,
             use_color=False,
             theme="classic",
-            no_activity=False,
         )
 
     def test_no_data_exits(self):

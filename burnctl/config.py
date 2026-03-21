@@ -15,7 +15,6 @@ DEFAULTS = {
     "no_color": False,
     "simple": False,
     "compact": False,
-    "no_activity": False,
     "claude_plan": "max5x",
     "gemini_plan": "none",
     "codex_plan": "none",

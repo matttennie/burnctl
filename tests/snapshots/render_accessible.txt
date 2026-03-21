@@ -4,10 +4,8 @@ Agent: Claude Code
   Plan: max5x
   Billing period: 2026-03-10 to 2026-04-10
   Days remaining: 28 of 31
-  Pace: 5 percent of plan value used
-  Projected period cost: $47.53
-  Messages: 1,931
   Sessions: 5
+  Input tokens: N/A
   Output tokens: 185,081
   Tool calls: 461
   API-equivalent cost: $4.63
@@ -21,8 +19,8 @@ Agent: Gemini CLI
   Plan: pay-as-you-go
   Billing period: 2026-03-01 to 2026-04-01
   Days remaining: 19 of 31
-  Messages: 57
   Sessions: 18
+  Input tokens: 100,000
   Output tokens: 45,000
   Tool calls: 379
   API-equivalent cost: $4.10

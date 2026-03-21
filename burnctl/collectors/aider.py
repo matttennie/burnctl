@@ -136,16 +136,15 @@ class AiderCollector(BaseCollector):
         return {
             "messages": match_count,
             "sessions": 0,
+            "input_tokens": total_sent,
             "output_tokens": total_received,
             "period_cost": period_cost,
             "alltime_cost": period_cost,
             "model_usage": {},
-            "daily_messages": {},
             "first_session": "",
             "total_messages": match_count,
             "total_sessions": 0,
             "tool_calls": 0,
-            "spark_data": [],
         }
 
     # ── Plan / billing ────────────────────────────────────────────

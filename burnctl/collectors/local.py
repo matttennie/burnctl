@@ -32,16 +32,15 @@ class LocalCollector(BaseCollector):
         return {
             "messages": 0,
             "sessions": 0,
+            "input_tokens": 0,
             "output_tokens": 0,
             "period_cost": 0.0,
             "alltime_cost": 0.0,
             "model_usage": {},
-            "daily_messages": {},
             "first_session": "",
             "total_messages": 0,
             "total_sessions": 0,
             "tool_calls": 0,
-            "spark_data": [],
         }
 
     def get_upgrade_url(self):

@@ -23,6 +23,15 @@ def _build_parser():
     parser = argparse.ArgumentParser(
         prog="burnctl",
         description="Unified AI coding agent usage dashboard.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "metrics:\n"
+            "  Est. API Cost   = sum of (input_tokens * input_rate\n"
+            "                    + output_tokens * output_rate\n"
+            "                    + cache_read_tokens * cache_read_rate\n"
+            "                    + cache_create_tokens * cache_create_rate) / 1M\n"
+            "  Value Ratio     = all-time API value / (plan_price * months_active)\n"
+        ),
     )
     parser.add_argument(
         "-v", "--version",
@@ -70,11 +79,6 @@ def _build_parser():
         "-t", "--theme",
         choices=list(THEMES),
         help="Color theme (default: config value or gradient)",
-    )
-    fmt_group.add_argument(
-        "--no-activity",
-        action="store_true",
-        help="Hide the DAILY ACTIVITY section",
     )
     fmt_group.add_argument(
         "-A", "--accessible",
@@ -213,8 +217,6 @@ def _merge_config(args, config):
         config["simple"] = True
     if args.compact:
         config["compact"] = True
-    if args.no_activity:
-        config["no_activity"] = True
     return config
 
 
@@ -385,14 +387,11 @@ def _render_report(args, config, collectors):
     use_color = not config.get("no_color", False)
     theme_name = config.get("theme", "gradient")
     simple = config.get("simple", False)
-    no_activity = config.get("no_activity", False)
-
     return render_full(
         agg,
         simple=simple,
         use_color=use_color,
         theme=theme_name,
-        no_activity=no_activity,
     )
 
 

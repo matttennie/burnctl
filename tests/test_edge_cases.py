@@ -558,11 +558,10 @@ class TestNumericEdgeCases:
             "period_cost": 5.0,
             "alltime_cost": 5.0,
             "model_usage": {},
-            "daily_messages": {},
             "first_session": "",
             "total_messages": 10,
             "total_sessions": 1,
-            "spark_data": [],
+            "input_tokens": 500,
         }
 
         result = aggregate_stats(
@@ -592,14 +591,13 @@ class TestNumericEdgeCases:
                     "projected_cost": 0,
                     "messages": -5,
                     "sessions": -1,
+                    "input_tokens": -500,
                     "output_tokens": -1000,
                     "tool_calls": -2,
                     "period_cost": -0.50,
                     "alltime_cost": -1.00,
                     "value_ratio": -0.5,
                     "model_usage": {},
-                    "daily_messages": {},
-                    "spark_data": [],
                     "first_session": "",
                     "total_messages": -5,
                     "total_sessions": -1,
@@ -652,11 +650,10 @@ class TestNumericEdgeCases:
                     "alltime_cost": float("nan"),
                     "value_ratio": float("nan"),
                     "model_usage": {},
-                    "daily_messages": {},
-                    "spark_data": [1, 2, 3],
                     "first_session": "2026-01-01",
                     "total_messages": 10,
                     "total_sessions": 1,
+                    "input_tokens": None,
                 },
             ],
             "total_period_cost": float("nan"),
@@ -701,11 +698,10 @@ class TestNumericEdgeCases:
                     "alltime_cost": 10.0,
                     "value_ratio": 0.5,
                     "model_usage": {},
-                    "daily_messages": {},
-                    "spark_data": [1, 2, 3],
                     "first_session": "2026-01-01",
                     "total_messages": 10,
                     "total_sessions": 1,
+                    "input_tokens": None,
                 },
             ],
             "total_period_cost": 5.0,
@@ -717,7 +713,7 @@ class TestNumericEdgeCases:
         ):
             result = render_full(stats, use_color=False)
         assert isinstance(result, str)
-        assert "0%" in result
+        assert "PERIOD USAGE" in result
 
     def test_inf_in_render_functions(self):
         """Infinity values in cost should not crash render functions."""
@@ -738,14 +734,13 @@ class TestNumericEdgeCases:
                     "projected_cost": float("inf"),
                     "messages": 10,
                     "sessions": 1,
+                    "input_tokens": None,
                     "output_tokens": 1000,
                     "tool_calls": 5,
                     "period_cost": float("inf"),
                     "alltime_cost": float("inf"),
                     "value_ratio": float("inf"),
                     "model_usage": {},
-                    "daily_messages": {},
-                    "spark_data": [1, 2, 3],
                     "first_session": "2026-01-01",
                     "total_messages": 10,
                     "total_sessions": 1,

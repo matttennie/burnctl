@@ -22,7 +22,6 @@ from burnctl.report import (
     render_diff,
     render_full,
     render_json,
-    sparkline,
     _safe_replace_day,
 )
 
@@ -54,6 +53,7 @@ def _make_collector(
     default_stats = {
         "messages": 100,
         "sessions": 10,
+        "input_tokens": 25000,
         "output_tokens": 50000,
         "tool_calls": 25,
         "period_cost": 12.50,
@@ -62,8 +62,6 @@ def _make_collector(
             "claude-3-opus-20251101": {"outputTokens": 30000},
             "claude-3-sonnet-20251101": {"outputTokens": 20000},
         },
-        "daily_messages": {"2025-01-01": 5, "2025-01-02": 10},
-        "spark_data": [5, 10, 15, 20, 8, 3],
         "first_session": "2024-06-15",
         "total_messages": 500,
         "total_sessions": 50,
@@ -91,6 +89,7 @@ def _make_agent_data(**overrides):
         "projected_cost": 25.81,
         "messages": 100,
         "sessions": 10,
+        "input_tokens": 25000,
         "output_tokens": 50000,
         "tool_calls": 25,
         "period_cost": 12.50,
@@ -100,8 +99,6 @@ def _make_agent_data(**overrides):
             "claude-3-opus-20251101": {"outputTokens": 30000},
             "claude-3-sonnet-20251101": {"outputTokens": 20000},
         },
-        "daily_messages": {},
-        "spark_data": [5, 10, 15, 20, 8, 3],
         "first_session": "2024-06-15",
         "total_messages": 500,
         "total_sessions": 50,
@@ -552,50 +549,6 @@ class TestFmtUsd:
         assert fmt_usd(-42.5) == "$-42.50"
 
 
-# ── sparkline ────────────────────────────────────────────────────
-
-
-class TestSparkline:
-    def test_empty_list(self):
-        assert sparkline([]) == ""
-
-    def test_single_value(self):
-        result = sparkline([5])
-        assert len(result) == 1
-        # single value: mn==mx, rng=1
-        # (5-5)/1*8 = 0 -> blocks[0] = space
-        assert result == " "
-
-    def test_all_same_values(self):
-        result = sparkline([5, 5, 5])
-        assert len(result) == 3
-        # All same: rng=1, all map to index 0 => space
-        assert result == "   "
-
-    def test_varied_values(self):
-        result = sparkline([0, 4, 8])
-        assert len(result) == 3
-        # min=0, max=8, rng=8
-        # 0 -> blocks[0] = space
-        # 4 -> blocks[min(8, int(4/8*8))] = blocks[4]
-        # 8 -> blocks[min(8, int(8/8*8))] = blocks[8]
-        blocks = " \u2581\u2582\u2583\u2584\u2585\u2586\u2587\u2588"
-        assert result[0] == blocks[0]
-        assert result[1] == blocks[4]
-        assert result[2] == blocks[8]
-
-    def test_two_values(self):
-        result = sparkline([0, 10])
-        blocks = " \u2581\u2582\u2583\u2584\u2585\u2586\u2587\u2588"
-        assert result[0] == blocks[0]
-        assert result[1] == blocks[8]
-
-    def test_descending_values(self):
-        result = sparkline([10, 5, 0])
-        blocks = " \u2581\u2582\u2583\u2584\u2585\u2586\u2587\u2588"
-        assert result[0] == blocks[8]
-        assert result[2] == blocks[0]
-
 
 # ── _strip_ansi ──────────────────────────────────────────────────
 
@@ -801,8 +754,8 @@ class TestRenderFull:
         stats = _make_stats()
         result = render_full(stats, use_color=False)
         assert "PERIOD USAGE" in result
-        assert "100" in result  # messages
-        assert "10" in result  # sessions
+        assert "25,000" in result  # input tokens
+        assert "50,000" in result  # output tokens
 
     @patch("os.get_terminal_size")
     def test_simple_mode_skips_value_roi(self, mock_term):
@@ -850,13 +803,6 @@ class TestRenderFull:
         assert "MODEL BREAKDOWN" not in result
 
     @patch("os.get_terminal_size")
-    def test_daily_activity_section(self, mock_term):
-        mock_term.return_value = os.terminal_size((120, 40))
-        stats = _make_stats()
-        result = render_full(stats, use_color=False)
-        assert "DAILY ACTIVITY" in result
-
-    @patch("os.get_terminal_size")
     def test_generated_date_footer(self, mock_term):
         mock_term.return_value = os.terminal_size((120, 40))
         stats = _make_stats(today="2025-03-01")
@@ -888,99 +834,54 @@ class TestRenderFull:
         # Should still render without error
         assert "TEST AGENT USAGE REPORT" in result
 
-    @patch("os.get_terminal_size")
-    def test_spark_data_from_daily_messages(self, mock_term):
-        """When spark_data is empty, it should be built from daily_messages."""
-        mock_term.return_value = os.terminal_size((120, 40))
-        agent = _make_agent_data(
-            spark_data=[],
-            daily_messages={"2025-01-01": 5, "2025-01-02": 10},
-            period_start="2025-01-01",
-            days_elapsed=2,
-        )
-        stats = _make_stats(agents=[agent])
-        result = render_full(stats, use_color=False)
-        assert "DAILY ACTIVITY" in result
-
-    @patch("os.get_terminal_size")
-    def test_pace_bar_rendered(self, mock_term):
-        mock_term.return_value = os.terminal_size((120, 40))
-        agent = _make_agent_data(pace_pct=50.0)
-        stats = _make_stats(agents=[agent])
-        result = render_full(stats, use_color=False)
-        assert "50%" in result
-
-    @patch("os.get_terminal_size")
-    def test_pace_clamped_at_100(self, mock_term):
-        """Pace > 100% should be clamped for the bar display."""
-        mock_term.return_value = os.terminal_size((120, 40))
-        agent = _make_agent_data(pace_pct=150.0)
-        stats = _make_stats(agents=[agent])
-        result = render_full(stats, use_color=False)
-        # Clamped to 100 for the bar but the label shows "100%"
-        assert "100%" in result
-
 
 # ── Model breakdown percentage labels & token consistency ────────
 
 
-class TestModelBreakdownPctLabel:
-    """Test <1% display for tiny fractions and token consistency between sections."""
+class TestModelBreakdownTokenDisplay:
+    """Test model breakdown shows input/output tokens and pricing."""
 
     @patch("os.get_terminal_size")
-    def test_tiny_fraction_shows_less_than_one_pct(self, mock_term):
-        """A model with 1 token out of 1,000,000 total should show '<1%'."""
+    def test_shows_in_out_columns(self, mock_term):
+        """Each model row shows In: and Out: token counts."""
         mock_term.return_value = os.terminal_size((120, 40))
         agent = _make_agent_data(
             output_tokens=1000000,
             model_usage={
-                "claude-3-opus-20251101": {"outputTokens": 999999},
-                "claude-3-sonnet-20251101": {"outputTokens": 1},
+                "claude-3-opus-20251101": {
+                    "inputTokens": 500000,
+                    "outputTokens": 999999,
+                },
+                "claude-3-sonnet-20251101": {
+                    "inputTokens": 100,
+                    "outputTokens": 1,
+                },
             },
         )
         stats = _make_stats(agents=[agent])
         result = render_full(stats, use_color=False)
-        assert "<1%" in result
+        assert "In:" in result
+        assert "Out:" in result
+        assert "500.0K" in result
+        assert "1000.0K" in result or "1.0M" in result
 
     @patch("os.get_terminal_size")
-    def test_zero_tokens_shows_zero_pct(self, mock_term):
-        """A model with 0 tokens should show '0%', not '<1%'."""
+    def test_shows_pricing_per_million(self, mock_term):
+        """Each model row shows $/M pricing."""
         mock_term.return_value = os.terminal_size((120, 40))
         agent = _make_agent_data(
-            output_tokens=1000,
             model_usage={
-                "claude-3-opus-20251101": {"outputTokens": 1000},
-                "claude-3-sonnet-20251101": {"outputTokens": 0},
+                "claude-3-opus-20251101": {"outputTokens": 30000},
+                "claude-3-sonnet-20251101": {"outputTokens": 20000},
             },
         )
         stats = _make_stats(agents=[agent])
         result = render_full(stats, use_color=False)
-        assert "0%" in result
-        # The zero-token model row itself should NOT show "<1%"
-        lines = result.split("\n")
-        for line in lines:
-            if "sonnet" in line.lower():
-                assert "<1%" not in line
-                assert "0%" in line
+        assert "/M" in result
 
     @patch("os.get_terminal_size")
-    def test_fifty_pct_shows_50(self, mock_term):
-        """A model with exactly 50% should show '50%'."""
-        mock_term.return_value = os.terminal_size((120, 40))
-        agent = _make_agent_data(
-            output_tokens=2000,
-            model_usage={
-                "claude-3-opus-20251101": {"outputTokens": 1000},
-                "claude-3-sonnet-20251101": {"outputTokens": 1000},
-            },
-        )
-        stats = _make_stats(agents=[agent])
-        result = render_full(stats, use_color=False)
-        assert "50%" in result
-
-    @patch("os.get_terminal_size")
-    def test_multiple_models_one_tiny_fraction(self, mock_term):
-        """Multiple models where one has a tiny fraction: only tiny one shows '<1%'."""
+    def test_multiple_models_all_shown(self, mock_term):
+        """All models appear in the breakdown."""
         mock_term.return_value = os.terminal_size((120, 40))
         agent = _make_agent_data(
             output_tokens=100001,
@@ -992,19 +893,15 @@ class TestModelBreakdownPctLabel:
         )
         stats = _make_stats(agents=[agent])
         result = render_full(stats, use_color=False)
-        lines = result.split("\n")
-        for line in lines:
-            if "haiku" in line.lower():
-                assert "<1%" in line
-                break
-        else:
-            pytest.fail("haiku model row not found in output")
+        lower = result.lower()
+        assert "opus" in lower
+        assert "sonnet" in lower
+        assert "haiku" in lower
 
     @patch("os.get_terminal_size")
-    def test_model_breakdown_total_matches_period_output_tokens(self, mock_term):
-        """MODEL BREAKDOWN total should match the 'Output Tokens' in PERIOD USAGE."""
+    def test_model_breakdown_output_tokens_present(self, mock_term):
+        """MODEL BREAKDOWN should show output token counts per model."""
         mock_term.return_value = os.terminal_size((120, 40))
-        # model_usage outputTokens sum to 50,000 which equals output_tokens
         agent = _make_agent_data(
             output_tokens=50000,
             model_usage={
@@ -1014,39 +911,12 @@ class TestModelBreakdownPctLabel:
         )
         stats = _make_stats(agents=[agent])
         result = render_full(stats, use_color=False)
-        # Both sections should contain the same formatted token count
-        assert "50,000" in result
-        # Count occurrences: period usage row + at least model breakdown rows
-        # The period usage "Output Tokens" row shows 50,000
-        # The model breakdown individual rows show 30,000 and 20,000
-        lines = result.split("\n")
-        period_output_tokens = None
-        for line in lines:
-            if "Output Tokens" in line:
-                # Extract the formatted number from the period usage row
-                match = re.search(r"[\d,]+", line.replace("Output Tokens", ""))
-                if match:
-                    period_output_tokens = match.group()
-                break
-        assert period_output_tokens == "50,000"
-        # Verify model rows sum to the same total
-        model_tok_sum = 0
-        in_model_section = False
-        for line in lines:
-            if "MODEL BREAKDOWN" in line:
-                in_model_section = True
-                continue
-            if in_model_section and "tok" in line:
-                tok_match = re.search(r"([\d,]+)\s+tok", line)
-                if tok_match:
-                    model_tok_sum += int(tok_match.group(1).replace(",", ""))
-            if in_model_section and "DAILY ACTIVITY" in line:
-                break
-        assert model_tok_sum == 50000
+        assert "30.0K" in result
+        assert "20.0K" in result
 
     @patch("os.get_terminal_size")
     def test_model_breakdown_consistent_with_varied_tokens(self, mock_term):
-        """Token consistency with an asymmetric split across models."""
+        """Token counts appear in the model breakdown."""
         mock_term.return_value = os.terminal_size((120, 40))
         agent = _make_agent_data(
             output_tokens=75000,
@@ -1057,15 +927,13 @@ class TestModelBreakdownPctLabel:
         )
         stats = _make_stats(agents=[agent])
         result = render_full(stats, use_color=False)
-        # Period usage row should show 75,000
-        assert "75,000" in result
-        # Model rows should show 50,000 and 25,000
-        assert "50,000" in result
-        assert "25,000" in result
+        assert "75,000" in result  # total output tokens in period stats
+        assert "50.0K" in result  # model breakdown compact format
+        assert "25.0K" in result
 
     @patch("os.get_terminal_size")
-    def test_single_model_shows_100_pct(self, mock_term):
-        """A single model should show '100%'."""
+    def test_single_model_shows_in_out(self, mock_term):
+        """A single model should show both In: and Out: columns."""
         mock_term.return_value = os.terminal_size((120, 40))
         agent = _make_agent_data(
             output_tokens=10000,
@@ -1077,8 +945,8 @@ class TestModelBreakdownPctLabel:
         result = render_full(stats, use_color=False)
         lines = result.split("\n")
         for line in lines:
-            if "opus" in line.lower() and "tok" in line:
-                assert "100%" in line
+            if "opus" in line.lower() and "Out:" in line:
+                assert "10.0K" in line
                 break
         else:
             pytest.fail("opus model row not found in output")
@@ -1181,8 +1049,8 @@ class TestRenderAccessible:
         result = render_accessible(stats)
         assert "Agent: Test Agent" in result
         assert "Plan: pro" in result
-        assert "Messages: 100" in result
         assert "Sessions: 10" in result
+        assert "Input tokens: 25,000" in result
         assert "Output tokens: 50,000" in result
         assert "Tool calls: 25" in result
 
@@ -1198,31 +1066,12 @@ class TestRenderAccessible:
         assert "Billing period: 2025-01-01 to 2025-02-01" in result
         assert "Days remaining: 16 of 31" in result
 
-    def test_includes_pace_with_plan_price(self):
+    def test_no_pace_in_output(self):
         agent = _make_agent_data(plan_price=20.0, pace_pct=62.5)
         stats = _make_stats(agents=[agent])
         result = render_accessible(stats)
-        assert "62 percent of plan value used" in result
-
-    def test_no_pace_with_zero_plan_price(self):
-        agent = _make_agent_data(plan_price=0, pace_pct=0.0)
-        stats = _make_stats(agents=[agent])
-        result = render_accessible(stats)
+        assert "Pace" not in result
         assert "percent of plan value used" not in result
-
-    def test_projected_cost_shown(self):
-        agent = _make_agent_data(
-            plan_price=20.0, projected_cost=25.81,
-        )
-        stats = _make_stats(agents=[agent])
-        result = render_accessible(stats)
-        assert "Projected period cost: $25.81" in result
-
-    def test_projected_cost_hidden_when_zero(self):
-        agent = _make_agent_data(plan_price=20.0, projected_cost=0)
-        stats = _make_stats(agents=[agent])
-        result = render_accessible(stats)
-        assert "Projected period cost" not in result
 
     def test_system_total_multi_agent(self):
         a1 = _make_agent_data(name="Claude", period_cost=10.0)
@@ -1364,14 +1213,13 @@ def _make_inactive_agent(**overrides):
         "projected_cost": 0.0,
         "messages": 0,
         "sessions": 0,
+        "input_tokens": 0,
         "output_tokens": 0,
         "tool_calls": 0,
         "period_cost": 0.0,
         "alltime_cost": 0.0,
         "value_ratio": 0.0,
         "model_usage": {},
-        "daily_messages": {},
-        "spark_data": [],
         "first_session": "",
         "total_messages": 0,
         "total_sessions": 0,
@@ -1391,9 +1239,9 @@ class TestInactiveAgents:
             "id", "name", "plan_name", "plan_price", "interval",
             "period_start", "period_end", "days_elapsed", "days_remaining",
             "total_days", "pace_pct", "projected_cost", "messages",
-            "sessions", "output_tokens", "tool_calls", "period_cost",
-            "alltime_cost", "value_ratio", "model_usage", "daily_messages",
-            "spark_data", "first_session", "total_messages", "total_sessions",
+            "sessions", "input_tokens", "output_tokens", "tool_calls", "period_cost",
+            "alltime_cost", "value_ratio", "model_usage",
+            "first_session", "total_messages", "total_sessions",
             "inactive",
         ]
         for key in expected_keys:
@@ -1616,8 +1464,9 @@ class TestRenderDiff:
         result = render_diff(cur, prev)
 
         assert "Claude" in result
-        assert "100" in result
-        assert "80" in result
+        assert "Sessions" in result
+        assert "$12.50" in result
+        assert "$10.00" in result
 
     def test_agent_only_in_current(self):
         """Agent present only in current period should show zeroed previous."""
@@ -1633,7 +1482,7 @@ class TestRenderDiff:
         result = render_diff(cur, prev)
 
         assert "Claude" in result
-        assert "50" in result
+        assert "$5.00" in result
         # Previous values shown as "?" for missing period dates
         assert "?" in result
 
@@ -1652,7 +1501,7 @@ class TestRenderDiff:
         result = render_diff(cur, prev)
 
         assert "Claude" in result
-        assert "80" in result
+        assert "$10.00" in result
 
     def test_multiple_agents(self):
         """Diff with multiple agents in both periods."""
@@ -1731,7 +1580,7 @@ class TestRenderDiff:
 
         result = render_diff(cur, prev)
 
-        assert "+50" in result
+        # sessions delta: 0 -> 0 = +0; cost delta present
         assert "+$7.50" in result
 
     def test_delta_negative_sign(self):
@@ -1754,9 +1603,8 @@ class TestRenderDiff:
 
         result = render_diff(cur, prev)
 
-        assert "-50" in result
-        # _diff_str formats negative USD as "$-7.50" (sign before digits)
-        assert "$-7.50" in result
+        # cost decreased
+        assert "-$7.50" in result
 
     def test_delta_zero_shows_plus(self):
         """Delta of zero should show '+0'."""
@@ -1842,8 +1690,8 @@ class TestRenderDiff:
 
         result = render_diff(cur, prev)
 
-        assert "Messages" in result
         assert "Sessions" in result
+        assert "Input Tokens" in result
         assert "Output Tokens" in result
         assert "Tool Calls" in result
         assert "Est. API Cost" in result

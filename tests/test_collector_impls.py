@@ -177,10 +177,10 @@ class TestClaudeGetStats:
             stats = collector.get_stats(start, end, ref_date)
 
         expected_keys = {
-            "messages", "sessions", "output_tokens", "period_cost",
-            "alltime_cost", "model_usage", "daily_messages",
+            "messages", "sessions", "input_tokens", "output_tokens", "period_cost",
+            "alltime_cost", "model_usage",
             "first_session", "total_messages", "total_sessions",
-            "tool_calls", "spark_data",
+            "tool_calls",
         }
         assert set(stats.keys()) == expected_keys
 
@@ -198,37 +198,8 @@ class TestClaudeGetStats:
             stats = collector.get_stats(datetime(2026, 3, 10), datetime(2026, 3, 13), datetime(2026, 3, 13))
         assert stats["first_session"] == "2026-03-01"
 
-    def test_daily_messages_map(self):
-        data = self._build_mock_data()
-        start = datetime(2026, 3, 10)
-        end = datetime(2026, 3, 13)
-
-        collector = ClaudeCollector()
-        with patch.object(collector, "_load_data", return_value=data), \
-             patch.object(collector, "_get_pricing_table", return_value=collector._fallback_pricing()):
-            stats = collector.get_stats(start, end, datetime(2026, 3, 13))
-
-        assert stats["daily_messages"]["2026-03-10"] == 10
-        assert stats["daily_messages"]["2026-03-12"] == 8
-        assert "2026-02-28" not in stats["daily_messages"]
-
-    def test_spark_data_length(self):
-        data = self._build_mock_data()
-        start = datetime(2026, 3, 10)
-        end = datetime(2026, 3, 13)
-        ref_date = datetime(2026, 3, 13)
-
-        collector = ClaudeCollector()
-        with patch.object(collector, "_load_data", return_value=data), \
-             patch.object(collector, "_get_pricing_table", return_value=collector._fallback_pricing()):
-            stats = collector.get_stats(start, end, ref_date)
-
-        # days_elapsed = min((ref_date - start).days, (end - start).days) = min(3, 3) = 3
-        # range(4) => indices 0..3 => 4 entries
-        assert len(stats["spark_data"]) == 4
-
     def test_period_cost_calculation(self):
-        """period_cost should be computed using output-only token pricing."""
+        """period_cost uses effective rate from alltime data when available."""
         data = self._build_mock_data()
         start = datetime(2026, 3, 10)
         end = datetime(2026, 3, 13)
@@ -239,9 +210,13 @@ class TestClaudeGetStats:
              patch.object(collector, "_get_pricing_table", return_value=pricing):
             stats = collector.get_stats(start, end, datetime(2026, 3, 13))
 
-        # Mar 10: claude-sonnet-4-6 => 5000 tokens at $5/M output
-        # Mar 12: claude-opus-4-6   => 2000 tokens at $25/M output
-        expected = (5000 * 5.0 / 1_000_000) + (2000 * 25.0 / 1_000_000)
+        # Mar 10: claude-sonnet-4-6 => 5000 tokens at effective rate
+        #   alltime cost for sonnet = (100k*1 + 50k*5 + 10k*0.1 + 5k*1.25)/1M = 0.35725
+        #   effective rate = 0.35725 / 50000 * 1M = 7.145
+        #   period cost = 5000 * 7.145 / 1M = 0.035725
+        # Mar 12: claude-opus-4-6 => 2000 tokens at $25/M (no alltime data, fallback)
+        #   period cost = 2000 * 25.0 / 1M = 0.05
+        expected = 0.035725 + 0.05
         assert stats["period_cost"] == pytest.approx(expected)
 
     def test_alltime_cost_uses_full_model_usage(self):
@@ -834,30 +809,9 @@ class TestGeminiGetStats:
 
         mu = stats["model_usage"]
         assert "gemini-2.5-flash" in mu
-        assert mu["gemini-2.5-flash"]["inputTokens"] == 100 + 300
+        assert mu["gemini-2.5-flash"]["inputTokens"] == 50 + 300  # non-cached only
         assert mu["gemini-2.5-flash"]["outputTokens"] == 200 + 400
         assert mu["gemini-2.5-flash"]["cachedTokens"] == 50
-
-    def test_daily_messages_map(self, tmp_path):
-        session = {
-            "startTime": "2026-03-10T10:00:00Z",
-            "messages": [
-                {"type": "user", "timestamp": "2026-03-10T10:00:00Z", "content": "a"},
-                {"type": "gemini", "timestamp": "2026-03-10T10:01:00Z", "model": "m",
-                 "tokens": {"input": 1, "output": 1, "cached": 0}},
-                {"type": "user", "timestamp": "2026-03-10T10:05:00Z", "content": "b"},
-                {"type": "gemini", "timestamp": "2026-03-10T10:06:00Z", "model": "m",
-                 "tokens": {"input": 1, "output": 1, "cached": 0}},
-            ],
-        }
-        fpath = self._make_session_file(tmp_path, "session-dm.json", session)
-
-        with patch("burnctl.collectors.gemini.glob.glob", return_value=[fpath]):
-            stats = GeminiCollector().get_stats(
-                datetime(2026, 3, 10), datetime(2026, 3, 11), datetime(2026, 3, 10),
-            )
-
-        assert stats["daily_messages"] == {"2026-03-10": 2}
 
     def test_returns_none_when_no_sessions(self):
         with patch("burnctl.collectors.gemini.glob.glob", return_value=[]):
@@ -1204,10 +1158,10 @@ class TestCodexGetStats:
             stats = CodexCollector().get_stats(start, end, ref)
 
         expected_keys = {
-            "messages", "sessions", "output_tokens", "period_cost",
-            "alltime_cost", "model_usage", "daily_messages",
+            "messages", "sessions", "input_tokens", "output_tokens", "period_cost",
+            "alltime_cost", "model_usage",
             "first_session", "total_messages", "total_sessions",
-            "tool_calls", "spark_data",
+            "tool_calls",
         }
         assert set(stats.keys()) == expected_keys
 
@@ -1272,7 +1226,7 @@ class TestCodexGetStats:
             stats = CodexCollector().get_stats(start, end, ref)
 
         assert "o3" in stats["model_usage"]
-        assert stats["model_usage"]["o3"]["inputTokens"] == 2000
+        assert stats["model_usage"]["o3"]["inputTokens"] == 1900  # non-cached only
         assert stats["model_usage"]["o3"]["outputTokens"] == 1000
 
     def test_first_session_date(self, tmp_path):
@@ -1295,26 +1249,6 @@ class TestCodexGetStats:
             stats = CodexCollector().get_stats(start, end, ref)
 
         assert stats["first_session"] == "2026-03-05"
-
-    def test_spark_data_length(self, tmp_path):
-        sessions_dir = tmp_path / "sessions"
-        sessions_dir.mkdir()
-
-        events = self._make_session_events("2026-03-10T10:00:00Z")
-        self._write_jsonl(sessions_dir / "session.jsonl", events)
-
-        start = datetime(2026, 3, 10, tzinfo=timezone.utc)
-        end = datetime(2026, 3, 13, tzinfo=timezone.utc)
-        ref = datetime(2026, 3, 13, tzinfo=timezone.utc)
-
-        with patch("burnctl.collectors.codex.SESSIONS_DIR", str(sessions_dir)), \
-             patch("burnctl.collectors.codex.os.path.isdir", return_value=True), \
-             patch("burnctl.collectors.codex.HISTORY_FILE", str(tmp_path / "history.jsonl")):
-            stats = CodexCollector().get_stats(start, end, ref)
-
-        # days_elapsed = min(3, 3) = 3 => range(4) => 4 entries
-        assert len(stats["spark_data"]) == 4
-
 
 class TestCodexCountHistory:
     """_count_history with/without history.jsonl."""
@@ -1969,47 +1903,6 @@ class TestApiUsageCollectorGetStats:
         assert stats is not None
         assert stats["sessions"] == 2  # n1 and n2
 
-    def test_daily_messages_bucketing(self, tmp_path):
-        """Messages are bucketed by date string."""
-        lines = [
-            self._make_entry("2026-03-11T10:00:00Z"),
-            self._make_entry("2026-03-11T14:00:00Z"),
-            self._make_entry("2026-03-12T10:00:00Z"),
-        ]
-        usage_file = tmp_path / "usage.jsonl"
-        usage_file.write_text("\n".join(lines) + "\n")
-
-        collector = ApiUsageCollector("openrouter", "OpenRouter", usage_file=str(usage_file))
-        stats = collector.get_stats(
-            datetime(2026, 3, 10), datetime(2026, 4, 10), datetime(2026, 3, 13),
-        )
-
-        assert stats is not None
-        assert stats["daily_messages"]["2026-03-11"] == 2
-        assert stats["daily_messages"]["2026-03-12"] == 1
-
-    def test_spark_data_length(self, tmp_path):
-        """spark_data has days_elapsed + 1 entries."""
-        lines = [
-            self._make_entry("2026-03-11T10:00:00Z"),
-        ]
-        usage_file = tmp_path / "usage.jsonl"
-        usage_file.write_text("\n".join(lines) + "\n")
-
-        start = datetime(2026, 3, 10)
-        end = datetime(2026, 4, 10)
-        ref_date = datetime(2026, 3, 13)
-
-        collector = ApiUsageCollector("openrouter", "OpenRouter", usage_file=str(usage_file))
-        stats = collector.get_stats(start, end, ref_date)
-
-        assert stats is not None
-        days_elapsed = min(
-            (ref_date - start).days,
-            (end - start).days,
-        )
-        assert len(stats["spark_data"]) == days_elapsed + 1
-
     def test_first_session_date(self, tmp_path):
         """first_session is the earliest entry across all time."""
         lines = [
@@ -2042,10 +1935,10 @@ class TestApiUsageCollectorGetStats:
         )
 
         expected_keys = {
-            "messages", "sessions", "output_tokens", "period_cost",
-            "alltime_cost", "model_usage", "daily_messages",
+            "messages", "sessions", "input_tokens", "output_tokens", "period_cost",
+            "alltime_cost", "model_usage",
             "first_session", "total_messages", "total_sessions",
-            "tool_calls", "spark_data",
+            "tool_calls",
         }
         assert set(stats.keys()) == expected_keys
 
