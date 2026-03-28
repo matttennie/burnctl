@@ -435,26 +435,33 @@ def _watch_loop(args, config, collectors):
     similar to ``top`` or ``htop``.
     """
     interval = max(1, args.watch)
+    use_alt_screen = hasattr(sys.stdout, "isatty") and sys.stdout.isatty()
 
-    # Enter alternate screen buffer; hide cursor during redraws
-    sys.stdout.write("\033[?1049h\033[?25l")
-    sys.stdout.flush()
+    if use_alt_screen:
+        # Enter alternate screen buffer; hide cursor during redraws
+        sys.stdout.write("\033[?1049h\033[?25l")
+        sys.stdout.flush()
 
     try:
         while True:
-            # Build the entire frame in memory BEFORE touching the screen
             output = _render_report(args, config, collectors)
 
-            # Atomic redraw: cursor home → content → clear any leftover lines
-            sys.stdout.write("\033[H")
-            sys.stdout.write(output)
-            sys.stdout.write("\n\033[J")
-            sys.stdout.flush()
+            if use_alt_screen:
+                # Atomic redraw: cursor home → content → clear leftover
+                sys.stdout.write("\033[H")
+                sys.stdout.write(output)
+                sys.stdout.write("\n\033[J")
+                sys.stdout.flush()
+            else:
+                # Non-tty: simple clear + print (no escape sequences)
+                sys.stdout.write("\033[2J\033[H")
+                sys.stdout.flush()
+                print(output)
 
             time.sleep(interval)
     except KeyboardInterrupt:
         pass
     finally:
-        # Restore: show cursor, leave alternate screen buffer
-        sys.stdout.write("\033[?25h\033[?1049l")
-        sys.stdout.flush()
+        if use_alt_screen:
+            sys.stdout.write("\033[?25h\033[?1049l")
+            sys.stdout.flush()

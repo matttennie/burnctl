@@ -306,7 +306,7 @@ class TestShow:
 
     def test_modified_marker(self, capsys):
         modified_config = dict(DEFAULTS)
-        modified_config["billing_day"] = 25  # Different from default of 10
+        modified_config["billing_day"] = 25  # Different from default of 1
 
         with patch("burnctl.config.load", return_value=modified_config):
             show()

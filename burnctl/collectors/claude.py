@@ -355,9 +355,12 @@ class ClaudeCollector(BaseCollector):
             )
             explicitly_set = False
             try:
-                with open(cfg_file, encoding="utf-8") as f:
-                    saved = json.load(f)
-                explicitly_set = "claude_plan" in saved
+                if os.path.getsize(cfg_file) > 1024 * 1024:
+                    pass  # oversized config — treat as not explicitly set
+                else:
+                    with open(cfg_file, encoding="utf-8") as f:
+                        saved = json.load(f)
+                    explicitly_set = "claude_plan" in saved
             except (OSError, json.JSONDecodeError, TypeError):
                 pass
             if not explicitly_set:

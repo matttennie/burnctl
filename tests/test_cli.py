@@ -985,8 +985,9 @@ class TestWatchLoop:
         mock_sleep = patch("time.sleep", side_effect=sleep_effect)
         mock_write = patch("sys.stdout.write", side_effect=capture_write)
         mock_flush = patch("sys.stdout.flush")
+        mock_isatty = patch("sys.stdout.isatty", return_value=True)
 
-        with mock_render, mock_sleep, mock_write, mock_flush:
+        with mock_render, mock_sleep, mock_write, mock_flush, mock_isatty:
             _watch_loop(args, config, collectors)
 
         return writes
@@ -1049,9 +1050,10 @@ class TestWatchLoop:
         mock_sleep = patch("time.sleep", side_effect=RuntimeError("boom"))
         mock_write = patch("sys.stdout.write", side_effect=capture_write)
         mock_flush = patch("sys.stdout.flush")
+        mock_isatty = patch("sys.stdout.isatty", return_value=True)
 
         with mock_render, mock_sleep, mock_write, mock_flush, \
-             pytest.raises(RuntimeError, match="boom"):
+             mock_isatty, pytest.raises(RuntimeError, match="boom"):
             _watch_loop(args, config, [FakeCollector()])
 
         joined = "".join(writes)
@@ -1662,7 +1664,8 @@ class TestWatchModeEdgeCases:
         with patch("burnctl.cli._render_report", return_value="report"), \
              patch("time.sleep", side_effect=capture_sleep), \
              patch("sys.stdout.write", side_effect=lambda s: writes.append(s) or len(s)), \
-             patch("sys.stdout.flush"):
+             patch("sys.stdout.flush"), \
+             patch("sys.stdout.isatty", return_value=True):
             _watch_loop(args, config, collectors)
 
         # interval = max(1, 0) = 1
@@ -1691,7 +1694,8 @@ class TestWatchModeEdgeCases:
         with patch("burnctl.cli._render_report", return_value="report"), \
              patch("time.sleep", side_effect=capture_sleep), \
              patch("sys.stdout.write", side_effect=lambda s: len(s)), \
-             patch("sys.stdout.flush"):
+             patch("sys.stdout.flush"), \
+             patch("sys.stdout.isatty", return_value=True):
             _watch_loop(args, config, collectors)
 
         assert sleep_vals == [1]
@@ -1720,6 +1724,7 @@ class TestWatchModeEdgeCases:
              patch("time.sleep", side_effect=SystemExit(0)), \
              patch("sys.stdout.write", side_effect=capture_write), \
              patch("sys.stdout.flush"), \
+             patch("sys.stdout.isatty", return_value=True), \
              pytest.raises(SystemExit):
             _watch_loop(args, config, collectors)
 
