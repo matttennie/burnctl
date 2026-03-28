@@ -10,9 +10,9 @@ import os
 import re
 import sys
 from collections import defaultdict
-from datetime import datetime, timedelta
+from datetime import datetime
 
-from burnctl.collectors.base import BaseCollector
+from burnctl.collectors.base import BaseCollector, _check_file_size
 from burnctl.config import PLAN_PRICES, ANNUAL_PRICES
 
 CLAUDE_DIR = os.path.join(os.path.expanduser("~"), ".claude")
@@ -76,9 +76,11 @@ class ClaudeCollector(BaseCollector):
 
     def _get_pricing_table(self, data):
         """Return the Claude pricing table, refreshing if unknown models appear."""
+        _refresh = None  # type: ignore[assignment]
         try:
             from claude_usage.pricing import get_pricing
             pricing_table = get_pricing()
+            _refresh = get_pricing
         except ImportError:
             pricing_table = self._fallback_pricing()
 
@@ -88,8 +90,8 @@ class ClaudeCollector(BaseCollector):
             all_models.update(entry.get("tokensByModel", {}).keys())
 
         unknown = all_models - set(pricing_table.keys())
-        if unknown:
-            refreshed = get_pricing(force_refresh=True)
+        if unknown and _refresh is not None:
+            refreshed = _refresh(force_refresh=True)
             if refreshed:
                 pricing_table = refreshed
 
@@ -126,7 +128,9 @@ class ClaudeCollector(BaseCollector):
                     # Skip files not modified since the cache was built
                     if os.path.getmtime(fpath) < cutoff_epoch:
                         continue
-                    with open(fpath) as fh:
+                    if not _check_file_size(fpath):
+                        continue
+                    with open(fpath, encoding="utf-8", errors="replace") as fh:
                         for line in fh:
                             try:
                                 entry = json.loads(line)
@@ -154,8 +158,16 @@ class ClaudeCollector(BaseCollector):
                                 in_tok = usage.get("input_tokens", 0)
                                 cache_read = usage.get("cache_read_input_tokens", 0)
                                 cache_create_raw = usage.get("cache_creation_input_tokens", 0)
-                                cache_detail = usage.get("cache_creation", {})
-                                cache_create = cache_create_raw or sum(cache_detail.values())
+                                cache_detail = usage.get("cache_creation")
+                                if cache_create_raw:
+                                    cache_create = cache_create_raw
+                                elif isinstance(cache_detail, dict):
+                                    cache_create = sum(
+                                        v for v in cache_detail.values()
+                                        if isinstance(v, (int, float))
+                                    )
+                                else:
+                                    cache_create = 0
                                 if model and out_tok:
                                     model_tokens[day][model] += out_tok
                                     model_delta[model]["outputTokens"] += out_tok
@@ -192,8 +204,10 @@ class ClaudeCollector(BaseCollector):
         """Load stats-cache.json and fill any gap with live session data."""
         if not os.path.isfile(STATS_FILE):
             return None
+        if not _check_file_size(STATS_FILE):
+            return None
         try:
-            with open(STATS_FILE) as f:
+            with open(STATS_FILE, encoding="utf-8", errors="replace") as f:
                 data = json.load(f)
         except (json.JSONDecodeError, OSError) as exc:
             print(f"Warning: could not read Claude stats: {exc}", file=sys.stderr)
@@ -325,30 +339,33 @@ class ClaudeCollector(BaseCollector):
         """Resolve Claude plan from env, config, or default.
 
         Priority: ``CLAUDE_PLAN`` env var > explicit config >
-        default (``max5x`` with a stderr warning).
+        default (``free`` with a stderr warning if usage detected).
         """
         env_plan = os.environ.get("CLAUDE_PLAN", "").lower()
         from_env = env_plan and env_plan in PLAN_PRICES
         if from_env:
             plan = env_plan
         else:
-            plan = config.get("claude_plan", "max5x")
+            plan = config.get("claude_plan", "free")
 
         # Warn if using the default and the user never set it
-        if plan == "max5x" and not from_env and not config.get("_claude_plan_set"):
+        if plan == "free" and not from_env:
             cfg_file = os.path.join(
                 os.path.expanduser("~"), ".config", "burnctl", "config.json",
             )
             explicitly_set = False
             try:
-                with open(cfg_file) as f:
-                    saved = json.load(f)
-                explicitly_set = "claude_plan" in saved
+                if os.path.getsize(cfg_file) > 1024 * 1024:
+                    pass  # oversized config — treat as not explicitly set
+                else:
+                    with open(cfg_file, encoding="utf-8") as f:
+                        saved = json.load(f)
+                    explicitly_set = "claude_plan" in saved
             except (OSError, json.JSONDecodeError, TypeError):
                 pass
             if not explicitly_set:
                 print(
-                    "Warning: Claude plan defaulting to 'max5x' ($100/mo). "
+                    "Warning: Claude plan not configured (defaulting to 'free'). "
                     "Set your plan: burnctl config claude_plan <plan>",
                     file=sys.stderr,
                 )
@@ -363,6 +380,6 @@ class ClaudeCollector(BaseCollector):
         return {
             "plan_name": plan,
             "plan_price": price,
-            "billing_day": config.get("billing_day", 10),
+            "billing_day": config.get("billing_day", 1),
             "interval": interval,
         }

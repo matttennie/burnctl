@@ -2,6 +2,7 @@
 
 import csv
 import json
+import math
 import os
 import re
 from datetime import datetime
@@ -11,6 +12,7 @@ import pytest
 
 from burnctl.report import (
     _FallbackTheme,
+    _diff_str,
     _strip_ansi,
     aggregate_stats,
     compute_period,
@@ -547,7 +549,6 @@ class TestFmtUsd:
 
     def test_negative(self):
         assert fmt_usd(-42.5) == "$-42.50"
-
 
 
 # ── _strip_ansi ──────────────────────────────────────────────────
@@ -1730,3 +1731,320 @@ class TestRenderDiff:
 
         assert "Idle" in result
         assert "-50" in result
+
+
+# ── compute_period edge cases ───────────────────────────────────
+
+
+class TestComputePeriodEdgeCases:
+    """Exhaustive edge-case and boundary tests for compute_period."""
+
+    @patch("burnctl.report.datetime")
+    def test_billing_day_31_in_february_non_leap(self, mock_dt):
+        """billing_day=31, current month = Feb (28 days, non-leap).
+        day 15 < 31 so period started last month (Jan 31).
+        End clamped to Feb 28."""
+        mock_dt.now.return_value = datetime(2025, 2, 15)
+        mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+
+        start, end, today_dt = compute_period(31)
+
+        assert start == datetime(2025, 1, 31)
+        assert end == datetime(2025, 2, 28)
+        assert today_dt == datetime(2025, 2, 15)
+
+    @patch("burnctl.report.datetime")
+    def test_billing_day_31_in_february_leap(self, mock_dt):
+        """billing_day=31, Feb of a leap year: end clamped to Feb 29."""
+        mock_dt.now.return_value = datetime(2024, 2, 15)
+        mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+
+        start, end, today_dt = compute_period(31)
+
+        assert start == datetime(2024, 1, 31)
+        assert end == datetime(2024, 2, 29)
+
+    @patch("burnctl.report.datetime")
+    def test_billing_day_31_in_april(self, mock_dt):
+        """billing_day=31, April 30: 30 < 31, so period started last month
+        (Mar 31), end clamped to Apr 30."""
+        mock_dt.now.return_value = datetime(2025, 4, 30)
+        mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+
+        start, end, today_dt = compute_period(31)
+
+        assert start == datetime(2025, 3, 31)
+        assert end == datetime(2025, 4, 30)
+
+    @patch("burnctl.report.datetime")
+    def test_billing_day_1_simplest_case(self, mock_dt):
+        """billing_day=1: simplest case, mid-month."""
+        mock_dt.now.return_value = datetime(2025, 6, 15)
+        mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+
+        start, end, today_dt = compute_period(1)
+
+        assert start == datetime(2025, 6, 1)
+        assert end == datetime(2025, 7, 1)
+        assert today_dt == datetime(2025, 6, 15)
+
+    @patch("burnctl.report.datetime")
+    def test_billing_day_1_on_first_of_month(self, mock_dt):
+        """billing_day=1, today is the 1st: period starts today."""
+        mock_dt.now.return_value = datetime(2025, 3, 1)
+        mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+
+        start, end, today_dt = compute_period(1)
+
+        assert start == datetime(2025, 3, 1)
+        assert end == datetime(2025, 4, 1)
+
+    @patch("burnctl.report.datetime")
+    def test_offset_minus_1_billing_day_31_in_march(self, mock_dt):
+        """offset=-1 with billing_day=31 in March:
+        previous period should start Jan 31."""
+        mock_dt.now.return_value = datetime(2025, 3, 15)
+        mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+
+        start, end, today_dt = compute_period(31, offset=-1)
+
+        # offset=-1 shifts today to Feb 2025; day 15 fits in Feb so no clamp
+        assert today_dt.month == 2
+        assert today_dt.year == 2025
+        assert today_dt.day == 15
+        # day 15 < 31, so start = prev month (Jan), billing_day 31 -> Jan 31
+        assert start == datetime(2025, 1, 31)
+        # end = _safe_replace_day(Feb, 31) = Feb 28
+        assert end == datetime(2025, 2, 28)
+
+    @patch("burnctl.report.datetime")
+    def test_offset_minus_2(self, mock_dt):
+        """offset=-2: two periods back from Mar 15 -> Jan."""
+        mock_dt.now.return_value = datetime(2025, 3, 15)
+        mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+
+        start, end, today_dt = compute_period(1, offset=-2)
+
+        assert today_dt.month == 1
+        assert today_dt.year == 2025
+        assert start == datetime(2025, 1, 1)
+        assert end == datetime(2025, 2, 1)
+
+    @patch("burnctl.report.datetime")
+    def test_offset_minus_2_wraps_year(self, mock_dt):
+        """offset=-2 from Feb should wrap to Dec of previous year."""
+        mock_dt.now.return_value = datetime(2025, 2, 10)
+        mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+
+        start, end, today_dt = compute_period(1, offset=-2)
+
+        assert today_dt.month == 12
+        assert today_dt.year == 2024
+        assert start == datetime(2024, 12, 1)
+        assert end == datetime(2025, 1, 1)
+
+    @patch("burnctl.report.datetime")
+    def test_billing_day_29_leap_year(self, mock_dt):
+        """billing_day=29 in Feb of a leap year: start = Feb 29."""
+        mock_dt.now.return_value = datetime(2024, 2, 29)
+        mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+
+        start, end, today_dt = compute_period(29)
+
+        assert start == datetime(2024, 2, 29)
+        assert end == datetime(2024, 3, 29)
+
+    @patch("burnctl.report.datetime")
+    def test_billing_day_29_non_leap_year(self, mock_dt):
+        """billing_day=29 in Feb of a non-leap year:
+        day 15 < 29, start = Jan 29, end clamped to Feb 28."""
+        mock_dt.now.return_value = datetime(2025, 2, 15)
+        mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+
+        start, end, today_dt = compute_period(29)
+
+        assert start == datetime(2025, 1, 29)
+        assert end == datetime(2025, 2, 28)
+
+
+# ── aggregate_stats edge cases ──────────────────────────────────
+
+
+class TestAggregateStatsEdgeCases:
+    """Exhaustive edge-case tests for aggregate_stats."""
+
+    def test_all_collectors_return_none_empty_period(self):
+        """All collectors return None and are unavailable -> empty period."""
+        c1 = _make_collector(collector_id="a")
+        c1.get_stats.return_value = None
+        c1.is_available.return_value = False
+        c2 = _make_collector(collector_id="b")
+        c2.get_stats.return_value = None
+        c2.is_available.return_value = False
+
+        result = aggregate_stats([c1, c2], {}, ref_date=datetime(2025, 1, 16))
+
+        assert result["agents"] == []
+        assert result["total_period_cost"] == 0.0
+
+    def test_mix_of_active_and_inactive_collectors(self):
+        """Mix: one active with stats, one available but None stats,
+        one unavailable with None stats."""
+        c_active = _make_collector(
+            collector_id="active",
+            stats={"period_cost": 10.0, "alltime_cost": 50.0},
+        )
+        c_inactive = _make_collector(collector_id="idle")
+        c_inactive.get_stats.return_value = None
+        c_inactive.is_available.return_value = True
+        c_unavail = _make_collector(collector_id="gone")
+        c_unavail.get_stats.return_value = None
+        c_unavail.is_available.return_value = False
+
+        result = aggregate_stats(
+            [c_active, c_inactive, c_unavail], {},
+            ref_date=datetime(2025, 1, 16),
+        )
+
+        ids = [a["id"] for a in result["agents"]]
+        assert "active" in ids
+        assert "idle" in ids
+        assert "gone" not in ids
+        assert result["total_period_cost"] == 10.0
+
+    def test_collector_returning_zero_costs(self):
+        """Collector with period_cost=0.0 and alltime_cost=0.0."""
+        c = _make_collector(
+            plan_price=20.0,
+            stats={"period_cost": 0.0, "alltime_cost": 0.0},
+        )
+        ref = datetime(2025, 1, 16)
+        result = aggregate_stats([c], {}, ref_date=ref)
+
+        agent = result["agents"][0]
+        assert agent["period_cost"] == 0.0
+        assert agent["alltime_cost"] == 0.0
+        assert agent["pace_pct"] == 0.0
+        assert agent["value_ratio"] == 0.0
+
+    def test_collector_with_very_large_token_counts(self):
+        """Tokens > 1 billion should not cause overflow or formatting errors."""
+        c = _make_collector(
+            stats={
+                "input_tokens": 2_000_000_000,
+                "output_tokens": 5_000_000_000,
+                "period_cost": 999999.99,
+                "alltime_cost": 1_500_000.00,
+            },
+        )
+        ref = datetime(2025, 1, 16)
+        result = aggregate_stats([c], {}, ref_date=ref)
+
+        agent = result["agents"][0]
+        assert agent["input_tokens"] == 2_000_000_000
+        assert agent["output_tokens"] == 5_000_000_000
+        assert agent["period_cost"] == 999999.99
+
+    def test_start_override_in_the_future(self):
+        """start_override after ref_date: the function should not crash."""
+        c = _make_collector(stats={"period_cost": 5.0, "alltime_cost": 10.0})
+        ref = datetime(2025, 1, 16)
+        future = datetime(2025, 6, 1)
+
+        result = aggregate_stats(
+            [c], {},
+            ref_date=ref,
+            start_override=future,
+            end_override=datetime(2025, 7, 1),
+        )
+
+        agent = result["agents"][0]
+        assert agent["days_elapsed"] <= agent["total_days"]
+        assert agent["period_cost"] == 5.0
+
+    def test_nan_in_period_cost(self):
+        """NaN in period_cost should propagate without crashing."""
+        c = _make_collector(
+            plan_price=20.0,
+            stats={"period_cost": float("nan"), "alltime_cost": 100.0},
+        )
+        ref = datetime(2025, 1, 16)
+        result = aggregate_stats([c], {}, ref_date=ref)
+
+        agent = result["agents"][0]
+        assert math.isnan(agent["period_cost"])
+
+    def test_nan_in_alltime_cost(self):
+        """NaN in alltime_cost should produce NaN value_ratio without crash."""
+        c = _make_collector(
+            plan_price=20.0,
+            stats={
+                "period_cost": 10.0,
+                "alltime_cost": float("nan"),
+                "first_session": "2024-06-15",
+            },
+        )
+        ref = datetime(2025, 1, 16)
+        result = aggregate_stats([c], {}, ref_date=ref)
+
+        agent = result["agents"][0]
+        assert math.isnan(agent["alltime_cost"])
+        assert math.isnan(agent["value_ratio"])
+
+
+# ── _diff_str edge cases ────────────────────────────────────────
+
+
+class TestDiffStr:
+    """Exhaustive edge-case tests for _diff_str."""
+
+    def test_zero_delta(self):
+        """Zero delta should show +0."""
+        result = _diff_str(100, 100)
+        assert result == "+0"
+
+    def test_zero_delta_usd(self):
+        """Zero delta in USD mode."""
+        result = _diff_str(10.0, 10.0, is_usd=True)
+        assert result == "+$0.00"
+
+    def test_positive_delta(self):
+        result = _diff_str(150, 100)
+        assert result == "+50"
+
+    def test_negative_delta(self):
+        result = _diff_str(80, 100)
+        assert result == "-20"
+
+    def test_very_large_numbers(self):
+        """Very large numbers should format with commas."""
+        result = _diff_str(2_000_000_000, 1_000_000_000)
+        assert result == "+1,000,000,000"
+
+    def test_very_large_negative(self):
+        result = _diff_str(0, 1_000_000_000)
+        assert "-1,000,000,000" in result
+
+    def test_float_displays_as_integer(self):
+        """Float 1250.0 should display as 1,250 (not 1,250.0)."""
+        result = _diff_str(1250.0, 0.0)
+        assert result == "+1,250"
+        assert ".0" not in result
+
+    def test_float_displays_as_integer_negative(self):
+        """Float -750.0 delta should show as -750."""
+        result = _diff_str(250.0, 1000.0)
+        assert result == "-750"
+        assert ".0" not in result
+
+    def test_usd_positive(self):
+        result = _diff_str(15.50, 10.00, is_usd=True)
+        assert result == "+$5.50"
+
+    def test_usd_negative(self):
+        result = _diff_str(5.00, 15.50, is_usd=True)
+        assert result == "-$10.50"
+
+    def test_usd_large_number(self):
+        result = _diff_str(10000.00, 0.00, is_usd=True)
+        assert result == "+$10000.00"

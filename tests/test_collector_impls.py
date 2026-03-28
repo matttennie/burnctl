@@ -238,9 +238,9 @@ class TestClaudePlanInfo:
 
     def test_default_plan(self):
         info = ClaudeCollector().get_plan_info({})
-        assert info["plan_name"] == "max5x"
-        assert info["plan_price"] == 100
-        assert info["billing_day"] == 10
+        assert info["plan_name"] == "free"
+        assert info["plan_price"] == 0
+        assert info["billing_day"] == 1
 
     def test_explicit_claude_plan(self):
         info = ClaudeCollector().get_plan_info({"claude_plan": "pro"})
@@ -282,10 +282,10 @@ class TestClaudePlanInfo:
     # ── Warning when using default plan without explicit config ──
 
     def test_warning_printed_when_default_and_config_file_missing(self, capsys):
-        """Warning emitted when plan is default max5x and config file absent."""
+        """Warning emitted when plan is default free and config file absent."""
         with patch("builtins.open", side_effect=OSError("no such file")):
             info = ClaudeCollector().get_plan_info({})
-        assert info["plan_name"] == "max5x"
+        assert info["plan_name"] == "free"
         err = capsys.readouterr().err
         assert "Warning" in err
         assert "burnctl config claude_plan" in err
@@ -298,7 +298,7 @@ class TestClaudePlanInfo:
         cfg.write_text(json.dumps({"billing_day": 15}))
         with patch("builtins.open", mock_open(read_data=cfg.read_text())):
             info = ClaudeCollector().get_plan_info({})
-        assert info["plan_name"] == "max5x"
+        assert info["plan_name"] == "free"
         err = capsys.readouterr().err
         assert "Warning" in err
         assert "burnctl config claude_plan" in err
@@ -345,12 +345,12 @@ class TestClaudePlanInfo:
         err = capsys.readouterr().err
         assert "burnctl config claude_plan" in err
 
-    def test_warning_mentions_max5x_default(self, capsys):
+    def test_warning_mentions_free_default(self, capsys):
         """Warning text mentions the defaulted plan name."""
         with patch("builtins.open", side_effect=OSError("no file")):
             ClaudeCollector().get_plan_info({})
         err = capsys.readouterr().err
-        assert "max5x" in err
+        assert "free" in err
 
     def test_env_var_max5x_no_warning(self, capsys):
         """Even max5x via env var should suppress the warning."""
@@ -361,11 +361,11 @@ class TestClaudePlanInfo:
         assert err == ""
 
     def test_invalid_env_var_falls_back_to_default_with_warning(self, capsys):
-        """Invalid CLAUDE_PLAN falls back to default max5x and warns."""
+        """Invalid CLAUDE_PLAN falls back to default free and warns."""
         with patch.dict(os.environ, {"CLAUDE_PLAN": "nope"}), \
              patch("builtins.open", side_effect=OSError("no file")):
             info = ClaudeCollector().get_plan_info({})
-        assert info["plan_name"] == "max5x"
+        assert info["plan_name"] == "free"
         err = capsys.readouterr().err
         assert "Warning" in err
 
@@ -373,7 +373,7 @@ class TestClaudePlanInfo:
         """Corrupt config.json triggers warning (JSONDecodeError caught)."""
         with patch("builtins.open", mock_open(read_data="{{not json")):
             info = ClaudeCollector().get_plan_info({})
-        assert info["plan_name"] == "max5x"
+        assert info["plan_name"] == "free"
         err = capsys.readouterr().err
         assert "burnctl config claude_plan" in err
 
@@ -1250,6 +1250,7 @@ class TestCodexGetStats:
 
         assert stats["first_session"] == "2026-03-05"
 
+
 class TestCodexCountHistory:
     """_count_history with/without history.jsonl."""
 
@@ -1975,3 +1976,175 @@ class TestApiUsageCollectorPlanInfo:
     def test_billing_day_from_config(self):
         info = ApiUsageCollector("openrouter", "OpenRouter").get_plan_info({"billing_day": 15})
         assert info["billing_day"] == 15
+
+
+# ---------------------------------------------------------------------------
+# Collector resilience edge cases
+# ---------------------------------------------------------------------------
+
+
+class TestClaudeCacheDetailEdgeCases:
+    """Edge cases for cache_detail handling in _scan_sessions_after."""
+
+    def _make_session_file(self, tmp_path, entries):
+        proj = tmp_path / "projects" / "test-proj"
+        proj.mkdir(parents=True)
+        fpath = proj / "session-edge.jsonl"
+        lines = [json.dumps(e) for e in entries]
+        fpath.write_text("\n".join(lines) + "\n")
+        return fpath
+
+    def test_cache_detail_is_none(self, tmp_path):
+        """cache_creation is None instead of dict: should not crash."""
+        entries = [
+            {
+                "type": "assistant",
+                "timestamp": "2026-03-12T10:00:00.000Z",
+                "sessionId": "s1",
+                "message": {
+                    "model": "claude-opus-4-6",
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": "hi"}],
+                    "usage": {
+                        "input_tokens": 10,
+                        "output_tokens": 50,
+                        "cache_read_input_tokens": 0,
+                        "cache_creation_input_tokens": 0,
+                        "cache_creation": None,
+                    },
+                },
+            },
+        ]
+        self._make_session_file(tmp_path, entries)
+
+        proj_dir = str(tmp_path / "projects")
+        with patch("burnctl.collectors.claude.PROJECTS_DIR", proj_dir):
+            act, tok, delta = ClaudeCollector._scan_sessions_after(
+                "2026-03-11", "2026-03-13",
+            )
+
+        assert len(tok) == 1
+        assert delta["claude-opus-4-6"]["cacheCreationInputTokens"] == 0
+
+    def test_cache_detail_contains_non_numeric_values(self, tmp_path):
+        """cache_creation dict with mixed types: non-numeric values ignored."""
+        entries = [
+            {
+                "type": "assistant",
+                "timestamp": "2026-03-12T10:00:00.000Z",
+                "sessionId": "s1",
+                "message": {
+                    "model": "claude-opus-4-6",
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": "hi"}],
+                    "usage": {
+                        "input_tokens": 10,
+                        "output_tokens": 50,
+                        "cache_read_input_tokens": 0,
+                        "cache_creation_input_tokens": 0,
+                        "cache_creation": {
+                            "ephemeral_5m_input_tokens": 200,
+                            "some_string_value": "not_a_number",
+                            "another_valid": 100,
+                        },
+                    },
+                },
+            },
+        ]
+        self._make_session_file(tmp_path, entries)
+
+        proj_dir = str(tmp_path / "projects")
+        with patch("burnctl.collectors.claude.PROJECTS_DIR", proj_dir):
+            act, tok, delta = ClaudeCollector._scan_sessions_after(
+                "2026-03-11", "2026-03-13",
+            )
+
+        # Only numeric values (200 + 100) should be summed
+        assert delta["claude-opus-4-6"]["cacheCreationInputTokens"] == 300
+
+
+class TestClaudeGetPricingNoClaudeUsageUnknownModel:
+    """Verify no crash when claude_usage not installed and unknown model found."""
+
+    def test_unknown_model_without_claude_usage_uses_fallback(self):
+        """When claude_usage is not installed, unknown models should use
+        fallback pricing without NameError."""
+        data = {
+            "modelUsage": {
+                "totally-new-model-2027": {
+                    "inputTokens": 1000,
+                    "outputTokens": 2000,
+                }
+            },
+            "dailyModelTokens": [],
+        }
+        collector = ClaudeCollector()
+        with patch.dict("sys.modules", {
+            "claude_usage": None,
+            "claude_usage.pricing": None,
+        }):
+            table = collector._get_pricing_table(data)
+
+        # Should not crash; unknown model not in fallback, but get_pricing is
+        # None so the refresh branch is skipped
+        assert isinstance(table, dict)
+        # The fallback table should have known models
+        assert "claude-opus-4-6" in table
+
+
+class TestApiUsageParseEntryEdgeCases:
+    """Edge cases for _parse_entry with malformed numeric fields."""
+
+    def test_string_where_int_expected(self):
+        """input_tokens: 'abc' should cause _parse_entry to return None."""
+        entry = {
+            "ts": "2026-03-12T10:00:00Z",
+            "provider": "openrouter",
+            "model_id": "test-model",
+            "input_tokens": "abc",
+            "output_tokens": 100,
+        }
+        result = _parse_entry(json.dumps(entry))
+        assert result is None
+
+    def test_none_values_for_numeric_fields(self):
+        """None for input_tokens should be handled (int(None) -> TypeError)."""
+        entry = {
+            "ts": "2026-03-12T10:00:00Z",
+            "provider": "openrouter",
+            "model_id": "test-model",
+            "input_tokens": None,
+            "output_tokens": None,
+        }
+        result = _parse_entry(json.dumps(entry))
+        # int(None) raises TypeError, caught by (ValueError, TypeError)
+        assert result is None
+
+    def test_string_cost_field(self):
+        """String cost value should cause _parse_entry to return None."""
+        entry = {
+            "ts": "2026-03-12T10:00:00Z",
+            "provider": "openrouter",
+            "model_id": "test-model",
+            "input_tokens": 100,
+            "output_tokens": 200,
+            "cost": "not-a-number",
+        }
+        result = _parse_entry(json.dumps(entry))
+        assert result is None
+
+    def test_valid_entry_with_zero_tokens(self):
+        """Valid entry with all zeros should parse fine."""
+        entry = {
+            "ts": "2026-03-12T10:00:00Z",
+            "provider": "openrouter",
+            "model_id": "test-model",
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "cost": 0.0,
+        }
+        result = _parse_entry(json.dumps(entry))
+        assert result is not None
+        assert result["input_tokens"] == 0
+        assert result["output_tokens"] == 0
+        assert result["cost"] == 0.0

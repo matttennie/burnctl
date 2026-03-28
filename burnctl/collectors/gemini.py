@@ -9,7 +9,7 @@ import json
 import os
 from datetime import datetime
 
-from burnctl.collectors.base import BaseCollector
+from burnctl.collectors.base import BaseCollector, _check_file_size
 from burnctl.pricing import get_agent_pricing
 
 _GEMINI_DIR = os.path.join(os.path.expanduser("~"), ".gemini")
@@ -67,8 +67,10 @@ class GeminiCollector(BaseCollector):
         end_str = end.strftime("%Y-%m-%d")
 
         for fpath in session_files:
+            if not _check_file_size(fpath):
+                continue
             try:
-                with open(fpath) as f:
+                with open(fpath, encoding="utf-8", errors="replace") as f:
                     session = json.load(f)
             except (json.JSONDecodeError, OSError):
                 continue

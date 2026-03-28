@@ -2,6 +2,8 @@
 
 import json
 import os
+import stat
+import sys
 from unittest.mock import patch
 
 import pytest
@@ -42,10 +44,10 @@ class TestConstants:
         assert set(DEFAULTS.keys()) == expected
 
     def test_defaults_billing_day(self):
-        assert DEFAULTS["billing_day"] == 10
+        assert DEFAULTS["billing_day"] == 1
 
     def test_defaults_claude_plan(self):
-        assert DEFAULTS["claude_plan"] == "max5x"
+        assert DEFAULTS["claude_plan"] == "free"
 
     def test_defaults_theme(self):
         assert DEFAULTS["theme"] == "gradient"
@@ -186,14 +188,16 @@ class TestLoad:
         config["billing_day"] = 999
         assert DEFAULTS["billing_day"] != 999
 
-    def test_extra_keys_in_saved_config_preserved(self, tmp_path):
+    def test_unknown_keys_in_saved_config_rejected(self, tmp_path):
+        """Unknown config keys are silently ignored (security hardening)."""
         config_file = tmp_path / "config.json"
-        saved = {"custom_extra_key": "hello"}
+        saved = {"custom_extra_key": "hello", "billing_day": 15}
         config_file.write_text(json.dumps(saved))
 
         with patch("burnctl.config.CONFIG_FILE", str(config_file)):
             config = load()
-        assert config["custom_extra_key"] == "hello"
+        assert "custom_extra_key" not in config
+        assert config["billing_day"] == 15  # known keys still work
 
     def test_oserror_on_read_returns_defaults(self, tmp_path, capsys):
         """Lines 83-84: OSError reading config file -> warning, defaults."""
@@ -302,7 +306,7 @@ class TestShow:
 
     def test_modified_marker(self, capsys):
         modified_config = dict(DEFAULTS)
-        modified_config["billing_day"] = 25  # Different from default of 10
+        modified_config["billing_day"] = 25  # Different from default of 1
 
         with patch("burnctl.config.load", return_value=modified_config):
             show()
@@ -703,3 +707,101 @@ class TestSetValue:
             set_value("no_color", "NO")
         saved_config = mock_save.call_args[0][0]
         assert saved_config["no_color"] is False
+
+
+# ── Config edge cases ───────────────────────────────────────────────
+
+
+class TestConfigEdgeCases:
+    """Exhaustive edge-case tests for config loading and saving."""
+
+    def test_first_run_hint_fires_when_config_missing(self, tmp_path, capsys):
+        """First-run hint should print when config file does not exist."""
+        fake_config = str(tmp_path / "nonexistent" / "config.json")
+        with patch("burnctl.config.CONFIG_FILE", fake_config):
+            load()
+        err = capsys.readouterr().err
+        assert "Welcome to burnctl" in err
+        assert "burnctl config billing_day" in err
+
+    def test_first_run_hint_not_fired_when_config_exists(self, tmp_path, capsys):
+        """First-run hint should NOT print when config file exists."""
+        config_file = tmp_path / "config.json"
+        config_file.write_text(json.dumps({"billing_day": 15}))
+        with patch("burnctl.config.CONFIG_FILE", str(config_file)):
+            load()
+        err = capsys.readouterr().err
+        assert "Welcome to burnctl" not in err
+
+    def test_config_file_too_large_rejected(self, tmp_path, capsys):
+        """Config file > 1 MiB should be rejected with warning."""
+        config_file = tmp_path / "config.json"
+        # Write just over 1 MiB of valid JSON
+        config_file.write_text('{"billing_day": 1}' + ' ' * (1024 * 1024 + 100))
+        with patch("burnctl.config.CONFIG_FILE", str(config_file)):
+            config = load()
+        assert config == DEFAULTS
+        err = capsys.readouterr().err
+        assert "too large" in err
+
+    def test_config_with_only_unknown_keys_returns_defaults(self, tmp_path):
+        """Config file with ONLY unknown keys -> all defaults used."""
+        config_file = tmp_path / "config.json"
+        saved = {
+            "unknown_key_1": "value1",
+            "unknown_key_2": 42,
+            "another_bogus": True,
+        }
+        config_file.write_text(json.dumps(saved))
+
+        with patch("burnctl.config.CONFIG_FILE", str(config_file)):
+            config = load()
+
+        # All defaults should be returned since no known keys were in saved
+        assert config == DEFAULTS
+        assert "unknown_key_1" not in config
+        assert "unknown_key_2" not in config
+
+    def test_empty_json_object_returns_defaults(self, tmp_path):
+        """Empty JSON object {} in config file -> all defaults used."""
+        config_file = tmp_path / "config.json"
+        config_file.write_text("{}")
+
+        with patch("burnctl.config.CONFIG_FILE", str(config_file)):
+            config = load()
+
+        assert config == DEFAULTS
+
+    @pytest.mark.skipif(
+        sys.platform == "win32",
+        reason="Unix-only directory permission test",
+    )
+    def test_save_creates_directory_with_correct_permissions(self, tmp_path):
+        """save() should create config directory with mode 0o700."""
+        config_dir = str(tmp_path / "new_subdir" / "burnctl")
+        config_file = os.path.join(config_dir, "config.json")
+
+        with patch("burnctl.config.CONFIG_DIR", config_dir), \
+             patch("burnctl.config.CONFIG_FILE", config_file):
+            save({"billing_day": 10})
+
+        assert os.path.isdir(config_dir)
+        dir_mode = stat.S_IMODE(os.stat(config_dir).st_mode)
+        assert dir_mode == 0o700
+
+    @pytest.mark.skipif(
+        sys.platform == "win32",
+        reason="Unix-only file permission test",
+    )
+    def test_save_creates_file_with_correct_permissions(self, tmp_path):
+        """save() should create config file with mode 0o600."""
+        config_dir = str(tmp_path / "perm_test")
+        config_file = os.path.join(config_dir, "config.json")
+
+        with patch("burnctl.config.CONFIG_DIR", config_dir), \
+             patch("burnctl.config.CONFIG_FILE", config_file):
+            save({"billing_day": 10})
+
+        assert os.path.isfile(config_file)
+        file_mode = stat.S_IMODE(os.stat(config_file).st_mode)
+        assert file_mode == 0o600

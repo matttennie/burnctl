@@ -954,9 +954,10 @@ class TestHandleUpgradeNoUrl:
 
 
 class TestWatchLoop:
-    """Cover the _watch_loop body (lines 343-353)."""
+    """Cover the _watch_loop alternate-screen double-buffered rendering."""
 
-    def test_watch_loop_renders_and_clears(self):
+    def _run_watch(self, render_return="mock report", sleep_effect=None):
+        """Helper: run _watch_loop capturing all stdout.write calls."""
         from burnctl.cli import _watch_loop
 
         args = argparse.Namespace(
@@ -975,14 +976,88 @@ class TestWatchLoop:
             writes.append(s)
             return len(s)
 
-        with patch("burnctl.cli._render_report", return_value="mock report"), \
-             patch("time.sleep", side_effect=KeyboardInterrupt), \
-             patch("sys.stdout.write", side_effect=capture_write), \
-             patch("sys.stdout.flush"):
+        if sleep_effect is None:
+            sleep_effect = KeyboardInterrupt
+
+        mock_render = patch(
+            "burnctl.cli._render_report", return_value=render_return,
+        )
+        mock_sleep = patch("time.sleep", side_effect=sleep_effect)
+        mock_write = patch("sys.stdout.write", side_effect=capture_write)
+        mock_flush = patch("sys.stdout.flush")
+        mock_isatty = patch("sys.stdout.isatty", return_value=True)
+
+        with mock_render, mock_sleep, mock_write, mock_flush, mock_isatty:
             _watch_loop(args, config, collectors)
 
-        # Should have written the clear-screen sequence
-        assert any("\033[2J\033[H" in w for w in writes)
+        return writes
+
+    def test_enters_alternate_screen_buffer(self):
+        writes = self._run_watch()
+        joined = "".join(writes)
+        # Must enter alternate screen buffer before any content
+        assert "\033[?1049h" in joined
+
+    def test_exits_alternate_screen_buffer_on_interrupt(self):
+        writes = self._run_watch()
+        joined = "".join(writes)
+        # Must leave alternate screen buffer in finally block
+        assert "\033[?1049l" in joined
+
+    def test_hides_and_restores_cursor(self):
+        writes = self._run_watch()
+        joined = "".join(writes)
+        assert "\033[?25l" in joined  # hide
+        assert "\033[?25h" in joined  # restore
+
+    def test_renders_before_writing(self):
+        writes = self._run_watch(render_return="test output")
+        joined = "".join(writes)
+        # Content must appear AFTER cursor-home, not after a full clear
+        assert "\033[H" in joined
+        assert "test output" in joined
+        # Must NOT use the old clear-entire-screen sequence
+        assert "\033[2J" not in joined
+
+    def test_clears_remainder_after_content(self):
+        writes = self._run_watch()
+        joined = "".join(writes)
+        # After content, should clear from cursor to end of screen
+        home_idx = joined.index("\033[H")
+        content_idx = joined.index("mock report", home_idx)
+        clear_idx = joined.index("\033[J", content_idx)
+        assert clear_idx > content_idx
+
+    def test_finally_runs_on_unexpected_error(self):
+        """Alternate screen cleanup runs even on unexpected errors."""
+        from burnctl.cli import _watch_loop
+
+        args = argparse.Namespace(
+            watch=2, period="current", export=None,
+            json=False, accessible=False, compact=False,
+        )
+        config = {
+            "no_color": False, "theme": "gradient",
+            "simple": False, "compact": False,
+        }
+        writes = []
+
+        def capture_write(s):
+            writes.append(s)
+            return len(s)
+
+        mock_render = patch("burnctl.cli._render_report", return_value="x")
+        mock_sleep = patch("time.sleep", side_effect=RuntimeError("boom"))
+        mock_write = patch("sys.stdout.write", side_effect=capture_write)
+        mock_flush = patch("sys.stdout.flush")
+        mock_isatty = patch("sys.stdout.isatty", return_value=True)
+
+        with mock_render, mock_sleep, mock_write, mock_flush, \
+             mock_isatty, pytest.raises(RuntimeError, match="boom"):
+            _watch_loop(args, config, [FakeCollector()])
+
+        joined = "".join(writes)
+        assert "\033[?1049l" in joined
 
 
 # ── --since / --until flags ──────────────────────────────────────────
@@ -1556,3 +1631,104 @@ class TestHandleUpgradeDeepLink:
         mock_open.assert_called_once_with("https://example.com/upgrade")
         out = capsys.readouterr().out
         assert "Beta Agent" in out
+
+
+# ── Watch mode edge cases ───────────────────────────────────────────
+
+
+class TestWatchModeEdgeCases:
+    """Edge cases for _watch_loop: interval clamping and exit handling."""
+
+    def test_watch_interval_zero_clamped_to_1(self):
+        """Watch with interval=0 should be clamped to 1."""
+        from burnctl.cli import _watch_loop
+
+        args = argparse.Namespace(
+            watch=0, period="current", export=None,
+            json=False, accessible=False, compact=False,
+        )
+        config = {
+            "no_color": False, "theme": "gradient",
+            "simple": False, "compact": False,
+        }
+        collectors = [FakeCollector()]
+
+        sleep_vals = []
+
+        def capture_sleep(n):
+            sleep_vals.append(n)
+            raise KeyboardInterrupt
+
+        writes = []
+
+        with patch("burnctl.cli._render_report", return_value="report"), \
+             patch("time.sleep", side_effect=capture_sleep), \
+             patch("sys.stdout.write", side_effect=lambda s: writes.append(s) or len(s)), \
+             patch("sys.stdout.flush"), \
+             patch("sys.stdout.isatty", return_value=True):
+            _watch_loop(args, config, collectors)
+
+        # interval = max(1, 0) = 1
+        assert sleep_vals == [1]
+
+    def test_watch_interval_negative_clamped_to_1(self):
+        """Watch with interval=-5 should be clamped to 1."""
+        from burnctl.cli import _watch_loop
+
+        args = argparse.Namespace(
+            watch=-5, period="current", export=None,
+            json=False, accessible=False, compact=False,
+        )
+        config = {
+            "no_color": False, "theme": "gradient",
+            "simple": False, "compact": False,
+        }
+        collectors = [FakeCollector()]
+
+        sleep_vals = []
+
+        def capture_sleep(n):
+            sleep_vals.append(n)
+            raise KeyboardInterrupt
+
+        with patch("burnctl.cli._render_report", return_value="report"), \
+             patch("time.sleep", side_effect=capture_sleep), \
+             patch("sys.stdout.write", side_effect=lambda s: len(s)), \
+             patch("sys.stdout.flush"), \
+             patch("sys.stdout.isatty", return_value=True):
+            _watch_loop(args, config, collectors)
+
+        assert sleep_vals == [1]
+
+    def test_watch_exits_cleanly_on_system_exit(self):
+        """Watch mode should handle SystemExit by re-raising after cleanup."""
+        from burnctl.cli import _watch_loop
+
+        args = argparse.Namespace(
+            watch=2, period="current", export=None,
+            json=False, accessible=False, compact=False,
+        )
+        config = {
+            "no_color": False, "theme": "gradient",
+            "simple": False, "compact": False,
+        }
+        collectors = [FakeCollector()]
+
+        writes = []
+
+        def capture_write(s):
+            writes.append(s)
+            return len(s)
+
+        with patch("burnctl.cli._render_report", return_value="report"), \
+             patch("time.sleep", side_effect=SystemExit(0)), \
+             patch("sys.stdout.write", side_effect=capture_write), \
+             patch("sys.stdout.flush"), \
+             patch("sys.stdout.isatty", return_value=True), \
+             pytest.raises(SystemExit):
+            _watch_loop(args, config, collectors)
+
+        joined = "".join(writes)
+        # Cleanup must still run: restore cursor + leave alternate screen
+        assert "\033[?25h" in joined
+        assert "\033[?1049l" in joined

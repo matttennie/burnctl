@@ -14,6 +14,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from burnctl.collectors.aider import AiderCollector
+from burnctl.collectors.base import MAX_FILE_SIZE, _check_file_size
 from burnctl.collectors.claude import ClaudeCollector
 from burnctl.collectors.codex import (
     _iter_session_files,
@@ -21,7 +22,7 @@ from burnctl.collectors.codex import (
     _parse_session,
 )
 from burnctl.collectors.gemini import GeminiCollector
-from burnctl.config import DEFAULTS, load
+from burnctl.config import DEFAULTS, _MAX_CONFIG_BYTES, load
 from burnctl.report import (
     aggregate_stats,
     fmt,
@@ -782,8 +783,8 @@ class TestNumericEdgeCases:
 class TestConfigEdgeCases:
     """Config file with unusual content."""
 
-    def test_config_extra_unknown_keys(self, tmp_path):
-        """Extra unknown keys in config should be preserved by load()."""
+    def test_config_unknown_keys_rejected(self, tmp_path):
+        """Unknown keys in config file are ignored (security hardening)."""
         config_file = tmp_path / "config.json"
         saved = {
             "billing_day": 15,
@@ -796,8 +797,8 @@ class TestConfigEdgeCases:
             config = load()
 
         assert config["billing_day"] == 15
-        assert config["unknown_future_key"] == "some_value"
-        assert config["another_extra"] == [1, 2, 3]
+        assert "unknown_future_key" not in config
+        assert "another_extra" not in config
         # Defaults should still be present for unset keys
         assert config["theme"] == DEFAULTS["theme"]
 
@@ -812,3 +813,221 @@ class TestConfigEdgeCases:
 
         # load() merges raw JSON values; no type coercion on load
         assert config["billing_day"] == "10"
+
+
+# =====================================================================
+# _check_file_size unit tests
+# =====================================================================
+
+
+class TestCheckFileSize:
+    """Unit tests for the _check_file_size guard in collectors/base.py."""
+
+    def test_normal_sized_file_passes(self, tmp_path):
+        """A file well under the limit should return True."""
+        f = tmp_path / "small.json"
+        f.write_bytes(b"x" * 1024)  # 1 KiB
+        assert _check_file_size(str(f)) is True
+
+    def test_oversized_file_fails_and_warns(self, tmp_path, capsys):
+        """A file exceeding the limit should return False and warn on stderr."""
+        f = tmp_path / "huge.json"
+        f.write_bytes(b"x" * (MAX_FILE_SIZE + 1))
+        result = _check_file_size(str(f))
+        assert result is False
+        err = capsys.readouterr().err
+        assert "Warning" in err
+        assert "oversized" in err
+        assert str(f) in err
+
+    def test_nonexistent_file_returns_true(self):
+        """A non-existent path should return True (let open() raise)."""
+        assert _check_file_size("/no/such/path/does_not_exist.json") is True
+
+    def test_custom_limit_small(self, tmp_path):
+        """Custom limit parameter should override the default."""
+        f = tmp_path / "data.bin"
+        f.write_bytes(b"x" * 500)
+        assert _check_file_size(str(f), limit=1000) is True
+        assert _check_file_size(str(f), limit=100) is False
+
+    def test_exact_boundary_at_limit_passes(self, tmp_path):
+        """A file at exactly the limit should pass (limit is exclusive)."""
+        limit = 4096
+        f = tmp_path / "exact.bin"
+        f.write_bytes(b"x" * limit)
+        assert _check_file_size(str(f), limit=limit) is True
+
+    def test_exact_boundary_one_over_fails(self, tmp_path):
+        """A file one byte over the limit should fail."""
+        limit = 4096
+        f = tmp_path / "over.bin"
+        f.write_bytes(b"x" * (limit + 1))
+        assert _check_file_size(str(f), limit=limit) is False
+
+    def test_empty_file_passes(self, tmp_path):
+        """A zero-byte file should pass."""
+        f = tmp_path / "empty.json"
+        f.write_bytes(b"")
+        assert _check_file_size(str(f)) is True
+
+    def test_oserror_on_stat_returns_true(self, tmp_path):
+        """If os.path.getsize raises OSError, return True (let open handle it)."""
+        f = tmp_path / "exists.json"
+        f.write_bytes(b"x" * 10)
+        with patch("burnctl.collectors.base.os.path.getsize", side_effect=OSError("perm")):
+            assert _check_file_size(str(f)) is True
+
+
+# =====================================================================
+# Config file size guard
+# =====================================================================
+
+
+class TestConfigFileSizeGuard:
+    """Config load() rejects config files larger than 1 MiB."""
+
+    def test_config_over_1mib_returns_defaults(self, tmp_path, capsys):
+        """A config file > 1 MiB should be rejected with a warning."""
+        config_file = tmp_path / "config.json"
+        # Write a file just over the limit
+        config_file.write_bytes(b"{}" + b" " * _MAX_CONFIG_BYTES)
+
+        with patch("burnctl.config.CONFIG_FILE", str(config_file)):
+            config = load()
+
+        assert config == DEFAULTS
+        err = capsys.readouterr().err
+        assert "Warning" in err
+        assert "too large" in err
+
+    def test_config_at_1mib_loads_normally(self, tmp_path):
+        """A config file at exactly 1 MiB should load normally."""
+        config_file = tmp_path / "config.json"
+        payload = json.dumps({"billing_day": 15})
+        # Pad to exactly _MAX_CONFIG_BYTES with whitespace (valid JSON ignores it)
+        padded = payload + " " * (_MAX_CONFIG_BYTES - len(payload))
+        config_file.write_text(padded)
+
+        with patch("burnctl.config.CONFIG_FILE", str(config_file)):
+            config = load()
+
+        assert config["billing_day"] == 15
+
+    def test_config_just_over_1mib_rejected(self, tmp_path, capsys):
+        """A config file at 1 MiB + 1 byte should be rejected."""
+        config_file = tmp_path / "config.json"
+        payload = json.dumps({"billing_day": 20})
+        padded = payload + " " * (_MAX_CONFIG_BYTES - len(payload) + 1)
+        config_file.write_text(padded)
+
+        with patch("burnctl.config.CONFIG_FILE", str(config_file)):
+            config = load()
+
+        assert config == DEFAULTS
+        err = capsys.readouterr().err
+        assert "too large" in err
+
+
+# =====================================================================
+# Collector file-size integration tests
+# =====================================================================
+
+
+class TestCollectorFileSizeIntegration:
+    """Verify each collector properly guards against oversized files."""
+
+    def test_claude_load_data_rejects_oversized_stats(self, tmp_path, capsys):
+        """ClaudeCollector._load_data returns None for oversized stats file."""
+        collector = ClaudeCollector()
+        big_file = tmp_path / "stats-cache.json"
+        big_file.write_bytes(b"{}" + b" " * MAX_FILE_SIZE)
+
+        with patch("burnctl.collectors.claude.STATS_FILE", str(big_file)), \
+             patch("burnctl.collectors.claude.os.path.isfile", return_value=True):
+            result = collector._load_data()
+
+        assert result is None
+        err = capsys.readouterr().err
+        assert "oversized" in err
+
+    def test_claude_scan_sessions_skips_oversized_jsonl(self, tmp_path, capsys):
+        """Claude session scanner skips JSONL files over the size limit."""
+        projects_dir = tmp_path / "projects" / "test"
+        projects_dir.mkdir(parents=True)
+        big_jsonl = projects_dir / "session.jsonl"
+        big_jsonl.write_bytes(b"x" * (MAX_FILE_SIZE + 1))
+
+        with patch("burnctl.collectors.claude.PROJECTS_DIR", str(tmp_path / "projects")):
+            act, tok, delta = ClaudeCollector._scan_sessions_after(
+                "2020-01-01", "2030-01-01",
+            )
+
+        # No data extracted from the oversized file
+        assert act == []
+        assert tok == []
+        assert delta == {}
+        err = capsys.readouterr().err
+        assert "oversized" in err
+
+    def test_gemini_skips_oversized_session(self, tmp_path, capsys):
+        """GeminiCollector.get_stats skips session files over the size limit."""
+        big_session = tmp_path / "session-big.json"
+        big_session.write_bytes(b"{}" + b" " * MAX_FILE_SIZE)
+
+        with patch(
+            "burnctl.collectors.gemini.glob.glob",
+            return_value=[str(big_session)],
+        ):
+            stats = GeminiCollector().get_stats(
+                datetime(2026, 3, 1), datetime(2026, 4, 1),
+                datetime(2026, 3, 15),
+            )
+
+        assert stats is None
+        err = capsys.readouterr().err
+        assert "oversized" in err
+
+    def test_codex_parse_session_rejects_oversized(self, tmp_path, capsys):
+        """Codex _parse_session returns None for oversized files."""
+        big_file = tmp_path / "session.jsonl"
+        big_file.write_bytes(b"x" * (MAX_FILE_SIZE + 1))
+
+        result = _parse_session(str(big_file))
+
+        assert result is None
+        err = capsys.readouterr().err
+        assert "oversized" in err
+
+    def test_aider_skips_oversized_history(self, tmp_path, capsys):
+        """AiderCollector.get_stats skips history files over the size limit."""
+        history = tmp_path / ".aider.chat.history.md"
+        # Create file over the limit with a valid cost line at the start
+        content = b"Tokens: 1k sent, 1k received. Cost: $0.05\n"
+        history.write_bytes(content + b"x" * MAX_FILE_SIZE)
+
+        collector = AiderCollector()
+        with patch(
+            "burnctl.collectors.aider._find_history_files",
+            return_value=[str(history)],
+        ):
+            stats = collector.get_stats(
+                datetime(2020, 1, 1), datetime(2030, 1, 1),
+                datetime(2026, 3, 15),
+            )
+
+        assert stats is None
+        err = capsys.readouterr().err
+        assert "oversized" in err
+
+    def test_collectors_import_check_file_size(self):
+        """All collectors that use file I/O import _check_file_size."""
+        import burnctl.collectors.claude as claude_mod
+        import burnctl.collectors.gemini as gemini_mod
+        import burnctl.collectors.codex as codex_mod
+        import burnctl.collectors.aider as aider_mod
+
+        assert hasattr(claude_mod, "_check_file_size")
+        assert hasattr(gemini_mod, "_check_file_size")
+        assert hasattr(codex_mod, "_check_file_size")
+        assert hasattr(aider_mod, "_check_file_size")

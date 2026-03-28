@@ -8,7 +8,7 @@ or Codex CLI.
 
 import json
 import os
-from datetime import datetime, timedelta
+from datetime import datetime
 
 from burnctl.collectors.base import BaseCollector
 
@@ -82,17 +82,20 @@ def _parse_entry(line):
     if not provider or not model_id:
         return None
 
-    return {
-        "ts": ts,
-        "provider": str(provider),
-        "model_id": str(model_id),
-        "model_name": str(obj.get("model_name", model_id)),
-        "input_tokens": int(obj.get("input_tokens", 0)),
-        "output_tokens": int(obj.get("output_tokens", 0)),
-        "cost": float(obj.get("cost", 0.0)),
-        "node_id": str(obj.get("node_id", "")),
-        "estimated": bool(obj.get("estimated", False)),
-    }
+    try:
+        return {
+            "ts": ts,
+            "provider": str(provider),
+            "model_id": str(model_id),
+            "model_name": str(obj.get("model_name", model_id)),
+            "input_tokens": int(obj.get("input_tokens", 0)),
+            "output_tokens": int(obj.get("output_tokens", 0)),
+            "cost": float(obj.get("cost", 0.0)),
+            "node_id": str(obj.get("node_id", "")),
+            "estimated": bool(obj.get("estimated", False)),
+        }
+    except (ValueError, TypeError):
+        return None
 
 
 def _load_entries(filepath=None):
@@ -112,7 +115,7 @@ def _load_entries(filepath=None):
 
     entries = []
     try:
-        with open(filepath) as fh:
+        with open(filepath, encoding="utf-8", errors="replace") as fh:
             for line in fh:
                 entry = _parse_entry(line)
                 if entry is not None:

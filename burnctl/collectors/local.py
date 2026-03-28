@@ -50,6 +50,6 @@ class LocalCollector(BaseCollector):
         return {
             "plan_name": "local",
             "plan_price": 0,
-            "billing_day": 1,
+            "billing_day": config.get("billing_day", 1),
             "interval": "mo",
         }

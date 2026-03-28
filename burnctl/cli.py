@@ -428,15 +428,40 @@ def main():
 
 
 def _watch_loop(args, config, collectors):
-    """Continuously re-render the report every N seconds."""
+    """Continuously re-render the report every N seconds.
+
+    Uses the alternate screen buffer and cursor-home rewriting so the
+    display updates atomically — no visible blank gap between refreshes,
+    similar to ``top`` or ``htop``.
+    """
     interval = max(1, args.watch)
+    use_alt_screen = hasattr(sys.stdout, "isatty") and sys.stdout.isatty()
+
+    if use_alt_screen:
+        # Enter alternate screen buffer; hide cursor during redraws
+        sys.stdout.write("\033[?1049h\033[?25l")
+        sys.stdout.flush()
+
     try:
         while True:
-            # Clear screen
-            sys.stdout.write("\033[2J\033[H")
-            sys.stdout.flush()
             output = _render_report(args, config, collectors)
-            print(output)
+
+            if use_alt_screen:
+                # Atomic redraw: cursor home → content → clear leftover
+                sys.stdout.write("\033[H")
+                sys.stdout.write(output)
+                sys.stdout.write("\n\033[J")
+                sys.stdout.flush()
+            else:
+                # Non-tty: simple clear + print (no escape sequences)
+                sys.stdout.write("\033[2J\033[H")
+                sys.stdout.flush()
+                print(output)
+
             time.sleep(interval)
     except KeyboardInterrupt:
-        print()  # clean exit on Ctrl-C
+        pass
+    finally:
+        if use_alt_screen:
+            sys.stdout.write("\033[?25h\033[?1049l")
+            sys.stdout.flush()
