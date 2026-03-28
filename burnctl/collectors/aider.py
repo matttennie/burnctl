@@ -12,7 +12,7 @@ dollar amounts are summed for the billing period.
 import os
 import re
 
-from burnctl.collectors.base import BaseCollector
+from burnctl.collectors.base import BaseCollector, _check_file_size
 
 _HISTORY_NAME = ".aider.chat.history.md"
 
@@ -100,18 +100,14 @@ class AiderCollector(BaseCollector):
         total_sent = 0
         total_received = 0
         period_cost = 0.0
+        alltime_cost = 0.0
         match_count = 0
+        alltime_matches = 0
 
         start_ts = start.timestamp()
 
         for path in files:
-            try:
-                mtime = os.path.getmtime(path)
-            except OSError:
-                continue
-
-            # Rough filter: skip files not touched during the period.
-            if mtime < start_ts:
+            if not _check_file_size(path):
                 continue
 
             try:
@@ -120,17 +116,28 @@ class AiderCollector(BaseCollector):
             except OSError:
                 continue
 
+            try:
+                mtime = os.path.getmtime(path)
+            except OSError:
+                mtime = 0
+
+            in_period = mtime >= start_ts
+
             for m in _COST_RE.finditer(content):
                 sent = _expand_suffix(m.group(1))
                 received = _expand_suffix(m.group(2))
                 cost = float(m.group(3))
 
-                total_sent += sent
-                total_received += received
-                period_cost += cost
-                match_count += 1
+                alltime_cost += cost
+                alltime_matches += 1
 
-        if match_count == 0:
+                if in_period:
+                    total_sent += sent
+                    total_received += received
+                    period_cost += cost
+                    match_count += 1
+
+        if alltime_matches == 0:
             return None
 
         return {
@@ -139,7 +146,7 @@ class AiderCollector(BaseCollector):
             "input_tokens": total_sent,
             "output_tokens": total_received,
             "period_cost": period_cost,
-            "alltime_cost": period_cost,
+            "alltime_cost": alltime_cost,
             "model_usage": {},
             "first_session": "",
             "total_messages": match_count,

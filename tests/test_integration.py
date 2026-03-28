@@ -571,8 +571,10 @@ Tokens: 500 sent, 200 received. Cost: $0.01
                 start, end, datetime(2026, 3, 13),
             )
 
-        # File was too old, so no matches
-        assert stats is None
+        # File was too old for the period, but counted for all-time
+        assert stats is not None
+        assert stats["period_cost"] == 0.0
+        assert stats["alltime_cost"] > 0
 
 
 # ── 5. API usage collector with realistic usage.jsonl ───────────────────
@@ -785,7 +787,7 @@ class _FakeCollector:
         return {
             "plan_name": "max5x",
             "plan_price": 100,
-            "billing_day": config.get("billing_day", 10),
+            "billing_day": config.get("billing_day", 1),
             "interval": "mo",
         }
 

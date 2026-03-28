@@ -428,15 +428,33 @@ def main():
 
 
 def _watch_loop(args, config, collectors):
-    """Continuously re-render the report every N seconds."""
+    """Continuously re-render the report every N seconds.
+
+    Uses the alternate screen buffer and cursor-home rewriting so the
+    display updates atomically — no visible blank gap between refreshes,
+    similar to ``top`` or ``htop``.
+    """
     interval = max(1, args.watch)
+
+    # Enter alternate screen buffer; hide cursor during redraws
+    sys.stdout.write("\033[?1049h\033[?25l")
+    sys.stdout.flush()
+
     try:
         while True:
-            # Clear screen
-            sys.stdout.write("\033[2J\033[H")
-            sys.stdout.flush()
+            # Build the entire frame in memory BEFORE touching the screen
             output = _render_report(args, config, collectors)
-            print(output)
+
+            # Atomic redraw: cursor home → content → clear any leftover lines
+            sys.stdout.write("\033[H")
+            sys.stdout.write(output)
+            sys.stdout.write("\n\033[J")
+            sys.stdout.flush()
+
             time.sleep(interval)
     except KeyboardInterrupt:
-        print()  # clean exit on Ctrl-C
+        pass
+    finally:
+        # Restore: show cursor, leave alternate screen buffer
+        sys.stdout.write("\033[?25h\033[?1049l")
+        sys.stdout.flush()

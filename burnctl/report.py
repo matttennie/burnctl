@@ -533,7 +533,6 @@ def _strip_ansi(text):
     return _ANSI_RE.sub("", text)
 
 
-
 # ── Full multi-column renderer ──────────────────────────────────────
 
 
@@ -893,6 +892,9 @@ def _diff_str(cur, prev, is_usd=False):
             return "+$%.2f" % delta
         return "-$%.2f" % abs(delta)
     sign = "+" if delta >= 0 else ""
+    # Ensure integer display for token counts (avoid "1,250.0")
+    if isinstance(delta, float) and delta == int(delta):
+        delta = int(delta)
     return "%s%s" % (sign, fmt(delta))
 
 
@@ -1079,12 +1081,13 @@ def export_csv(stats, filepath="burnctl.csv"):
         "period_cost",
         "alltime_cost",
     ]
-    file_exists = os.path.isfile(filepath)
-
     try:
         with open(filepath, "a", newline="") as f:
+            # Use file position to decide header — avoids TOCTOU race
+            # between os.path.isfile() and open().
+            needs_header = f.tell() == 0
             writer = csv.DictWriter(f, fieldnames=fieldnames)
-            if not file_exists:
+            if needs_header:
                 writer.writeheader()
             for a in agents:
                 writer.writerow({

@@ -259,7 +259,7 @@ class TestAiderGetStatsErrorPaths:
     """Cover lines 110-111, 115, 120-121, 134 in aider.py get_stats."""
 
     def test_getmtime_oserror_skips_file(self, tmp_path):
-        """Lines 110-111: OSError on getmtime -> continue."""
+        """OSError on getmtime -> file counted for alltime but not period."""
         hist = tmp_path / ".aider.chat.history.md"
         hist.write_text("Tokens: 1k sent, 1k received. Cost: $0.05\n")
 
@@ -275,11 +275,14 @@ class TestAiderGetStatsErrorPaths:
                 datetime(2020, 1, 1), datetime(2030, 1, 1), datetime.now(),
             )
 
-        # File skipped -> no matches -> returns None
-        assert stats is None
+        # File is still read for all-time cost, but mtime=0 means
+        # it won't match the period (start_ts > 0)
+        assert stats is not None
+        assert stats["alltime_cost"] == 0.05
+        assert stats["period_cost"] == 0.0
 
-    def test_old_mtime_skips_file(self, tmp_path):
-        """Line 115: mtime < start_ts -> skip file."""
+    def test_old_mtime_excludes_from_period_but_counts_alltime(self, tmp_path):
+        """Old mtime -> file excluded from period but counted for alltime."""
         hist = tmp_path / ".aider.chat.history.md"
         hist.write_text("Tokens: 1k sent, 1k received. Cost: $0.05\n")
 
@@ -299,7 +302,10 @@ class TestAiderGetStatsErrorPaths:
                 start, datetime(2025, 2, 1), datetime(2025, 1, 15),
             )
 
-        assert stats is None
+        assert stats is not None
+        assert stats["alltime_cost"] == 0.05
+        assert stats["period_cost"] == 0.0
+        assert stats["messages"] == 0  # no period messages
 
     def test_open_oserror_skips_file(self, tmp_path):
         """Lines 120-121: OSError on file read -> continue."""

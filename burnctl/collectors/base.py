@@ -1,6 +1,33 @@
 """Base collector interface for AI coding agents."""
 
+import os
+import sys
 from abc import ABC, abstractmethod
+
+# Maximum file size (bytes) we'll attempt to parse.  Protects against
+# OOM if a data file is unexpectedly huge (e.g., corruption, symlink to
+# /dev/urandom, or multi-GB log growth).  50 MiB is generous for any
+# reasonable session/config file.
+MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 MiB
+
+
+def _check_file_size(path, limit=MAX_FILE_SIZE):
+    """Return *True* if *path* is within *limit* bytes.
+
+    Prints a warning to stderr and returns *False* when the file is
+    too large or un-stat-able.
+    """
+    try:
+        size = os.path.getsize(path)
+    except OSError:
+        return True  # can't stat → let open() raise naturally
+    if size > limit:
+        print(
+            f"Warning: skipping oversized file ({size:,} bytes): {path}",
+            file=sys.stderr,
+        )
+        return False
+    return True
 
 
 class BaseCollector(ABC):

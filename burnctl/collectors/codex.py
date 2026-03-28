@@ -6,9 +6,9 @@ Reads session data from ``~/.codex/sessions/`` (JSONL files) and
 
 import json
 import os
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
-from burnctl.collectors.base import BaseCollector
+from burnctl.collectors.base import BaseCollector, _check_file_size
 from burnctl.pricing import get_agent_pricing
 
 CODEX_DIR = os.path.join(os.path.expanduser("~"), ".codex")
@@ -100,8 +100,11 @@ def _parse_session(path):
     last_token_usage = None
     tool_calls = 0
 
+    if not _check_file_size(path):
+        return None
+
     try:
-        with open(path) as fh:
+        with open(path, encoding="utf-8", errors="replace") as fh:
             for line in fh:
                 line = line.strip()
                 if not line:
@@ -368,11 +371,13 @@ class CodexCollector(BaseCollector):
         """
         if not os.path.isfile(HISTORY_FILE):
             return 0, 0
+        if not _check_file_size(HISTORY_FILE):
+            return 0, 0
 
         total_messages = 0
         session_ids = set()
         try:
-            with open(HISTORY_FILE) as fh:
+            with open(HISTORY_FILE, encoding="utf-8", errors="replace") as fh:
                 for line in fh:
                     line = line.strip()
                     if not line:
