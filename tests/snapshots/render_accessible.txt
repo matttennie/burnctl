@@ -4,31 +4,31 @@ Agent: Claude Code
   Plan: max5x
   Billing period: 2026-03-10 to 2026-04-10
   Days remaining: 28 of 31
-  Sessions: 5
-  Input tokens: N/A
-  Output tokens: 185,081
-  Tool calls: 461
-  API-equivalent cost: $4.63
-  All-time value: $844.12
+  Period sessions: 5
+  Period input tokens: N/A
+  Period output tokens: 185,081
+  Period tool calls: 461
+  Period API-equivalent cost: $4.63
+  All-time API value: $844.12
   Value ratio: 4.2x
   First session: 2026-01-10
-  Total messages: 29,328
-  Total sessions: 95
+  All-time messages: 29,328
+  All-time sessions: 95
 
 Agent: Gemini CLI
   Plan: pay-as-you-go
   Billing period: 2026-03-01 to 2026-04-01
   Days remaining: 19 of 31
-  Sessions: 18
-  Input tokens: 100,000
-  Output tokens: 45,000
-  Tool calls: 379
-  API-equivalent cost: $4.10
-  All-time value: $4.10
+  Period sessions: 18
+  Period input tokens: 100,000
+  Period output tokens: 45,000
+  Period tool calls: 379
+  Period API-equivalent cost: $4.10
+  All-time API value: $4.10
   Value ratio: 0.0x
   First session: 2026-02-12
-  Total messages: 57
-  Total sessions: 18
+  All-time messages: 57
+  All-time sessions: 18
 
 System total period cost: $8.73
 

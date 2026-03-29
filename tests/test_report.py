@@ -827,6 +827,15 @@ class TestRenderFull:
         assert "System Total" not in result
 
     @patch("os.get_terminal_size")
+    def test_all_time_totals_section_present(self, mock_term):
+        mock_term.return_value = os.terminal_size((120, 40))
+        stats = _make_stats()
+        result = render_full(stats, use_color=False)
+        assert "ALL-TIME TOTALS" in result
+        assert "500" in result
+        assert "50" in result
+
+    @patch("os.get_terminal_size")
     def test_terminal_size_fallback(self, mock_term):
         """When get_terminal_size raises, should fall back to 80 cols."""
         mock_term.side_effect = OSError("not a tty")
@@ -1050,15 +1059,15 @@ class TestRenderAccessible:
         result = render_accessible(stats)
         assert "Agent: Test Agent" in result
         assert "Plan: pro" in result
-        assert "Sessions: 10" in result
-        assert "Input tokens: 25,000" in result
-        assert "Output tokens: 50,000" in result
-        assert "Tool calls: 25" in result
+        assert "Period sessions: 10" in result
+        assert "Period input tokens: 25,000" in result
+        assert "Period output tokens: 50,000" in result
+        assert "Period tool calls: 25" in result
 
     def test_includes_value_info(self):
         stats = _make_stats()
         result = render_accessible(stats)
-        assert "All-time value: $150.00" in result
+        assert "All-time API value: $150.00" in result
         assert "Value ratio: 1.1x" in result
 
     def test_includes_billing_period(self):
@@ -1095,8 +1104,8 @@ class TestRenderAccessible:
         stats = _make_stats()
         result = render_accessible(stats)
         assert "First session: 2024-06-15" in result
-        assert "Total messages: 500" in result
-        assert "Total sessions: 50" in result
+        assert "All-time messages: 500" in result
+        assert "All-time sessions: 50" in result
 
 
 # ── export_csv ───────────────────────────────────────────────────

@@ -97,10 +97,13 @@ class TestBuildParser:
             (["--json"], "json"),
             (["-c"], "compact"),
             (["--compact"], "compact"),
+            (["--full"], "compact"),
             (["-s"], "simple"),
             (["--simple"], "simple"),
-            (["-n"], "no_color"),
-            (["--no-color"], "no_color"),
+            (["--detailed"], "simple"),
+            (["--color"], "color"),
+            (["-n"], "color"),
+            (["--no-color"], "color"),
             (["-A"], "accessible"),
             (["--accessible"], "accessible"),
         ],
@@ -108,7 +111,10 @@ class TestBuildParser:
     def test_output_format_flags(self, flag, attr):
         parser = self._get_parser()
         args = parser.parse_args(flag)
-        assert getattr(args, attr) is True
+        if flag in (["--full"], ["--detailed"], ["-n"], ["--no-color"]):
+            assert getattr(args, attr) is False
+        else:
+            assert getattr(args, attr) is True
 
     def test_theme_flag(self):
         parser = self._get_parser()
@@ -211,9 +217,9 @@ class TestBuildParser:
         parser = self._get_parser()
         args = parser.parse_args([])
         assert args.json is False
-        assert args.compact is False
-        assert args.simple is False
-        assert args.no_color is False
+        assert args.compact is None
+        assert args.simple is None
+        assert args.color is None
         assert args.accessible is False
         assert args.plan is None
         assert args.interval is None
@@ -317,9 +323,9 @@ class TestMergeConfig:
             interval=None,
             billing_day=None,
             theme=None,
-            no_color=False,
-            simple=False,
-            compact=False,
+            color=None,
+            simple=None,
+            compact=None,
         )
         defaults.update(overrides)
         return argparse.Namespace(**defaults)
@@ -370,10 +376,19 @@ class TestMergeConfig:
     def test_no_color_override(self):
         from burnctl.cli import _merge_config
 
-        args = self._make_args(no_color=True)
+        args = self._make_args(color=False)
         config = self._base_config()
         result = _merge_config(args, config)
         assert result["no_color"] is True
+
+    def test_color_override(self):
+        from burnctl.cli import _merge_config
+
+        args = self._make_args(color=True)
+        config = self._base_config()
+        config["no_color"] = True
+        result = _merge_config(args, config)
+        assert result["no_color"] is False
 
     def test_simple_override(self):
         from burnctl.cli import _merge_config
@@ -383,6 +398,15 @@ class TestMergeConfig:
         result = _merge_config(args, config)
         assert result["simple"] is True
 
+    def test_detailed_override(self):
+        from burnctl.cli import _merge_config
+
+        args = self._make_args(simple=False)
+        config = self._base_config()
+        config["simple"] = True
+        result = _merge_config(args, config)
+        assert result["simple"] is False
+
     def test_compact_override(self):
         from burnctl.cli import _merge_config
 
@@ -390,6 +414,15 @@ class TestMergeConfig:
         config = self._base_config()
         result = _merge_config(args, config)
         assert result["compact"] is True
+
+    def test_full_override(self):
+        from burnctl.cli import _merge_config
+
+        args = self._make_args(compact=False)
+        config = self._base_config()
+        config["compact"] = True
+        result = _merge_config(args, config)
+        assert result["compact"] is False
 
     def test_unset_flags_do_not_override(self):
         from burnctl.cli import _merge_config

@@ -52,6 +52,29 @@ def _date_str(dt):
     return dt.strftime("%Y-%m-%d")
 
 
+def _usage_snapshot(raw):
+    """Normalize a token-usage payload to the keys burnctl relies on."""
+    usage = raw or {}
+    return {
+        "input_tokens": usage.get("input_tokens", 0),
+        "cached_input_tokens": usage.get("cached_input_tokens", 0),
+        "output_tokens": usage.get("output_tokens", 0),
+    }
+
+
+def _usage_delta(current, previous):
+    """Return the non-negative delta between two cumulative snapshots."""
+    cur = _usage_snapshot(current)
+    prev = _usage_snapshot(previous)
+    return {
+        "input_tokens": max(cur["input_tokens"] - prev["input_tokens"], 0),
+        "cached_input_tokens": max(
+            cur["cached_input_tokens"] - prev["cached_input_tokens"], 0,
+        ),
+        "output_tokens": max(cur["output_tokens"] - prev["output_tokens"], 0),
+    }
+
+
 # Skip session files larger than 50 MB to avoid unbounded memory usage.
 _MAX_SESSION_BYTES = 50 * 1024 * 1024
 
@@ -97,8 +120,8 @@ def _parse_session(path):
     session_ts = None
     models = set()
     user_messages = []
-    last_token_usage = None
-    tool_calls = 0
+    token_checkpoints = []
+    tool_timestamps = []
 
     if not _check_file_size(path):
         return None
@@ -137,22 +160,27 @@ def _parse_session(path):
                     elif msg_type == "token_count":
                         info = payload.get("info") or {}
                         usage = info.get("total_token_usage")
-                        if usage:
-                            last_token_usage = usage
+                        if usage and timestamp is not None:
+                            token_checkpoints.append(
+                                (timestamp, _usage_snapshot(usage)),
+                            )
 
                     elif msg_type in _TOOL_EVENT_TYPES:
-                        tool_calls += 1
+                        if timestamp is not None:
+                            tool_timestamps.append(timestamp)
 
                 elif evt_type == "response_item":
                     item_type = payload.get("type", "")
                     if item_type in ("function_call", "tool_call"):
-                        tool_calls += 1
+                        if timestamp is not None:
+                            tool_timestamps.append(timestamp)
                     for part in (payload.get("content") or []):
                         if isinstance(part, dict) and part.get("type") in (
                             "tool_use",
                             "function_call",
                         ):
-                            tool_calls += 1
+                            if timestamp is not None:
+                                tool_timestamps.append(timestamp)
 
     except OSError:
         return None
@@ -164,8 +192,12 @@ def _parse_session(path):
         "session_ts": session_ts,
         "models": models,
         "user_messages": user_messages,
-        "total_token_usage": last_token_usage,
-        "tool_calls": tool_calls,
+        "total_token_usage": (
+            token_checkpoints[-1][1] if token_checkpoints else None
+        ),
+        "tool_calls": len(tool_timestamps),
+        "token_checkpoints": token_checkpoints,
+        "tool_timestamps": tool_timestamps,
     }
 
 
@@ -268,7 +300,9 @@ class CodexCollector(BaseCollector):
                 continue
 
             session_ts = parsed["session_ts"]
-            token_usage = parsed["total_token_usage"]
+            token_checkpoints = sorted(
+                parsed["token_checkpoints"], key=lambda item: item[0],
+            )
             models = parsed["models"]
 
             # Pick the primary model for pricing (alphabetically for
@@ -283,9 +317,10 @@ class CodexCollector(BaseCollector):
             # -- All-time ------------------------------------------
             alltime_sessions += 1
             alltime_messages += len(parsed["user_messages"])
-            alltime_cost += _compute_session_cost(
-                token_usage, model_pricing,
+            final_usage = (
+                token_checkpoints[-1][1] if token_checkpoints else None
             )
+            alltime_cost += _compute_session_cost(final_usage, model_pricing)
 
             if session_ts is not None:
                 if (
@@ -295,32 +330,34 @@ class CodexCollector(BaseCollector):
                     first_session_dt = session_ts
 
             # -- Period filtering ----------------------------------
-            in_period = False
-            if session_ts is not None:
-                in_period = start <= session_ts < end
+            session_active_in_period = False
 
-            if in_period:
-                period_sessions += 1
-                period_tool_calls += parsed["tool_calls"]
+            prev_usage = None
+            for checkpoint_ts, checkpoint_usage in token_checkpoints:
+                delta_usage = _usage_delta(checkpoint_usage, prev_usage)
+                prev_usage = checkpoint_usage
 
-                if token_usage:
-                    out_tok = token_usage.get("output_tokens", 0)
-                    in_tok = token_usage.get("input_tokens", 0)
-                    cached_in = token_usage.get("cached_input_tokens", 0)
-                    non_cached_in = max(in_tok - cached_in, 0)
-                    period_input_tokens += non_cached_in
-                    period_output_tokens += out_tok
-                    period_cost += _compute_session_cost(
-                        token_usage, model_pricing,
+                if not (start <= checkpoint_ts < end):
+                    continue
+
+                session_active_in_period = True
+                out_tok = delta_usage.get("output_tokens", 0)
+                in_tok = delta_usage.get("input_tokens", 0)
+                cached_in = delta_usage.get("cached_input_tokens", 0)
+                non_cached_in = max(in_tok - cached_in, 0)
+                period_input_tokens += non_cached_in
+                period_output_tokens += out_tok
+                period_cost += _compute_session_cost(
+                    delta_usage, model_pricing,
+                )
+
+                if primary_model:
+                    bucket = period_model_usage.setdefault(
+                        primary_model,
+                        {"inputTokens": 0, "outputTokens": 0},
                     )
-
-                    if primary_model:
-                        bucket = period_model_usage.setdefault(
-                            primary_model,
-                            {"inputTokens": 0, "outputTokens": 0},
-                        )
-                        bucket["inputTokens"] += non_cached_in
-                        bucket["outputTokens"] += out_tok
+                    bucket["inputTokens"] += non_cached_in
+                    bucket["outputTokens"] += out_tok
 
             # Count user messages per day
             for msg_ts in parsed["user_messages"]:
@@ -328,10 +365,26 @@ class CodexCollector(BaseCollector):
                     continue
                 day_str = _date_str(msg_ts)
                 if start <= msg_ts < end:
+                    session_active_in_period = True
                     period_messages += 1
                     daily_messages[day_str] = (
                         daily_messages.get(day_str, 0) + 1
                     )
+
+            for tool_ts in parsed["tool_timestamps"]:
+                if start <= tool_ts < end:
+                    session_active_in_period = True
+                    period_tool_calls += 1
+
+            if (
+                not session_active_in_period
+                and session_ts is not None
+                and start <= session_ts < end
+            ):
+                session_active_in_period = True
+
+            if session_active_in_period:
+                period_sessions += 1
 
         if alltime_sessions == 0:
             return None

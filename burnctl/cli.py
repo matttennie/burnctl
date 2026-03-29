@@ -65,18 +65,39 @@ def _build_parser():
     )
     fmt_group.add_argument(
         "-c", "--compact",
+        dest="compact",
         action="store_true",
-        help="Single-line compact output",
+        help="Single-line period summary",
+    )
+    fmt_group.add_argument(
+        "--full",
+        dest="compact",
+        action="store_false",
+        help="Disable compact mode for this run",
     )
     fmt_group.add_argument(
         "-s", "--simple",
+        dest="simple",
         action="store_true",
-        help="Skip VALUE & ROI section",
+        help="Show period usage only (hide all-time VALUE & ROI)",
+    )
+    fmt_group.add_argument(
+        "--detailed",
+        dest="simple",
+        action="store_false",
+        help="Re-enable the all-time VALUE & ROI section for this run",
+    )
+    fmt_group.add_argument(
+        "--color",
+        dest="color",
+        action="store_true",
+        help="Force ANSI colors on for this run",
     )
     fmt_group.add_argument(
         "-n", "--no-color",
-        action="store_true",
-        help="Disable ANSI colors",
+        dest="color",
+        action="store_false",
+        help="Force ANSI colors off for this run",
     )
     fmt_group.add_argument(
         "-t", "--theme",
@@ -88,6 +109,7 @@ def _build_parser():
         action="store_true",
         help="Plain text, screen-reader friendly output",
     )
+    parser.set_defaults(compact=None, simple=None, color=None)
 
     # Billing
     billing_group = parser.add_argument_group("billing")
@@ -222,12 +244,12 @@ def _merge_config(args, config):
         config["billing_day"] = args.billing_day
     if args.theme:
         config["theme"] = args.theme
-    if args.no_color:
-        config["no_color"] = True
-    if args.simple:
-        config["simple"] = True
-    if args.compact:
-        config["compact"] = True
+    if args.color is not None:
+        config["no_color"] = not args.color
+    if args.simple is not None:
+        config["simple"] = args.simple
+    if args.compact is not None:
+        config["compact"] = args.compact
     return config
 
 

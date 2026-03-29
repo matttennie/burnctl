@@ -1250,6 +1250,122 @@ class TestCodexGetStats:
 
         assert stats["first_session"] == "2026-03-05"
 
+    def test_period_usage_uses_token_checkpoint_timestamps(self, tmp_path):
+        sessions_dir = tmp_path / "sessions"
+        sessions_dir.mkdir()
+
+        events = [
+            {
+                "type": "session_meta",
+                "timestamp": "2026-03-09T23:50:00Z",
+                "payload": {"timestamp": "2026-03-09T23:50:00Z"},
+            },
+            {
+                "type": "turn_context",
+                "timestamp": "2026-03-09T23:50:00Z",
+                "payload": {"model": "codex-mini"},
+            },
+            {
+                "type": "event_msg",
+                "timestamp": "2026-03-09T23:55:00Z",
+                "payload": {"type": "user_message", "content": "before"},
+            },
+            {
+                "type": "event_msg",
+                "timestamp": "2026-03-09T23:56:00Z",
+                "payload": {
+                    "type": "token_count",
+                    "info": {
+                        "total_token_usage": {
+                            "input_tokens": 1000,
+                            "cached_input_tokens": 100,
+                            "output_tokens": 500,
+                        }
+                    },
+                },
+            },
+            {
+                "type": "event_msg",
+                "timestamp": "2026-03-10T00:10:00Z",
+                "payload": {"type": "user_message", "content": "during"},
+            },
+            {
+                "type": "event_msg",
+                "timestamp": "2026-03-10T00:11:00Z",
+                "payload": {
+                    "type": "token_count",
+                    "info": {
+                        "total_token_usage": {
+                            "input_tokens": 1400,
+                            "cached_input_tokens": 150,
+                            "output_tokens": 700,
+                        }
+                    },
+                },
+            },
+        ]
+        self._write_jsonl(sessions_dir / "session.jsonl", events)
+
+        start = datetime(2026, 3, 10, tzinfo=timezone.utc)
+        end = datetime(2026, 3, 11, tzinfo=timezone.utc)
+        ref = datetime(2026, 3, 10, tzinfo=timezone.utc)
+
+        with patch("burnctl.collectors.codex.SESSIONS_DIR", str(sessions_dir)), \
+             patch("burnctl.collectors.codex.os.path.isdir", return_value=True), \
+             patch("burnctl.collectors.codex.HISTORY_FILE", str(tmp_path / "history.jsonl")):
+            stats = CodexCollector().get_stats(start, end, ref)
+
+        assert stats["messages"] == 1
+        assert stats["sessions"] == 1
+        assert stats["input_tokens"] == 350
+        assert stats["output_tokens"] == 200
+        assert stats["model_usage"]["codex-mini"]["inputTokens"] == 350
+        assert stats["model_usage"]["codex-mini"]["outputTokens"] == 200
+
+    def test_tool_calls_are_period_scoped_by_event_timestamp(self, tmp_path):
+        sessions_dir = tmp_path / "sessions"
+        sessions_dir.mkdir()
+
+        events = [
+            {
+                "type": "session_meta",
+                "timestamp": "2026-03-09T23:50:00Z",
+                "payload": {"timestamp": "2026-03-09T23:50:00Z"},
+            },
+            {
+                "type": "turn_context",
+                "timestamp": "2026-03-09T23:50:00Z",
+                "payload": {"model": "codex-mini"},
+            },
+            {
+                "type": "response_item",
+                "timestamp": "2026-03-09T23:59:00Z",
+                "payload": {"type": "function_call", "name": "before"},
+            },
+            {
+                "type": "response_item",
+                "timestamp": "2026-03-10T00:02:00Z",
+                "payload": {"type": "function_call", "name": "during"},
+            },
+            {
+                "type": "event_msg",
+                "timestamp": "2026-03-10T00:03:00Z",
+                "payload": {"type": "user_message", "content": "hello"},
+            },
+        ]
+        self._write_jsonl(sessions_dir / "session.jsonl", events)
+
+        start = datetime(2026, 3, 10, tzinfo=timezone.utc)
+        end = datetime(2026, 3, 11, tzinfo=timezone.utc)
+        ref = datetime(2026, 3, 10, tzinfo=timezone.utc)
+
+        with patch("burnctl.collectors.codex.SESSIONS_DIR", str(sessions_dir)), \
+             patch("burnctl.collectors.codex.os.path.isdir", return_value=True), \
+             patch("burnctl.collectors.codex.HISTORY_FILE", str(tmp_path / "history.jsonl")):
+            stats = CodexCollector().get_stats(start, end, ref)
+
+        assert stats["tool_calls"] == 1
+
 
 class TestCodexCountHistory:
     """_count_history with/without history.jsonl."""

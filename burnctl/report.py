@@ -748,6 +748,28 @@ def render_full(stats, simple=False, use_color=True, theme="gradient"):
             total_content = f"{total_label}{total_val}"
         lines.append(box_line(total_content, raw_len=len(total_raw)))
 
+    lines.append(box_sep_light())
+    lines.append(box_title("ALL-TIME TOTALS"))
+    lines.append(box_empty())
+    lines.append(
+        _row_bold(
+            "Messages",
+            [fmt(a["total_messages"]) for a in agents],
+        ),
+    )
+    lines.append(
+        _row_bold(
+            "Sessions",
+            [fmt(a["total_sessions"]) for a in agents],
+        ),
+    )
+    lines.append(
+        _row(
+            "First Session",
+            [a["first_session"] or "N/A" for a in agents],
+        ),
+    )
+
     # ── VALUE & ROI ──
     if not simple:
         lines.append(box_sep_light())
@@ -755,7 +777,7 @@ def render_full(stats, simple=False, use_color=True, theme="gradient"):
         lines.append(box_empty())
         lines.append(
             _row_bold(
-                "All-time Value",
+                "API Value",
                 [fmt_usd(a["alltime_cost"]) for a in agents],
             ),
         )
@@ -1025,26 +1047,26 @@ def render_accessible(stats):
         lines.append(
             f"  Days remaining: {a['days_remaining']} of {a['total_days']}",
         )
-        lines.append(f"  Sessions: {fmt(a['sessions'])}")
+        lines.append(f"  Period sessions: {fmt(a['sessions'])}")
         in_tok = a.get("input_tokens")
         lines.append(
-            f"  Input tokens: {'N/A' if in_tok is None else fmt(in_tok)}"
+            f"  Period input tokens: {'N/A' if in_tok is None else fmt(in_tok)}"
         )
-        lines.append(f"  Output tokens: {fmt(a['output_tokens'])}")
-        lines.append(f"  Tool calls: {fmt(a['tool_calls'])}")
+        lines.append(f"  Period output tokens: {fmt(a['output_tokens'])}")
+        lines.append(f"  Period tool calls: {fmt(a['tool_calls'])}")
         lines.append(
-            f"  API-equivalent cost: {fmt_usd(a['period_cost'])}",
+            f"  Period API-equivalent cost: {fmt_usd(a['period_cost'])}",
         )
         lines.append(
-            f"  All-time value: {fmt_usd(a['alltime_cost'])}",
+            f"  All-time API value: {fmt_usd(a['alltime_cost'])}",
         )
         lines.append(f"  Value ratio: {a['value_ratio']:.1f}x")
         lines.append(f"  First session: {a['first_session']}")
         lines.append(
-            f"  Total messages: {fmt(a['total_messages'])}",
+            f"  All-time messages: {fmt(a['total_messages'])}",
         )
         lines.append(
-            f"  Total sessions: {fmt(a['total_sessions'])}",
+            f"  All-time sessions: {fmt(a['total_sessions'])}",
         )
         lines.append("")
 
