@@ -153,6 +153,16 @@ class TestBuildParser:
         args = parser.parse_args(["-w", "5"])
         assert args.watch == 5
 
+    def test_top_mode_default(self):
+        parser = self._get_parser()
+        args = parser.parse_args(["--top-mode"])
+        assert args.top_mode == 10
+
+    def test_top_mode_custom(self):
+        parser = self._get_parser()
+        args = parser.parse_args(["--top-mode", "30"])
+        assert args.top_mode == 30
+
     def test_config_subcommand(self):
         parser = self._get_parser()
         args = parser.parse_args(["config"])
@@ -1059,6 +1069,105 @@ class TestWatchLoop:
         joined = "".join(writes)
         assert "\033[?1049l" in joined
 
+    def test_report_content_present(self):
+        """Report content appears in the output."""
+        writes = self._run_watch(render_return="my report data")
+        joined = "".join(writes)
+        assert "my report data" in joined
+
+    def test_spinner_in_output(self):
+        """Generated line gets a spinner dot."""
+        writes = self._run_watch(
+            render_return="Report\n  Generated: 2026-03-29\n",
+        )
+        joined = "".join(writes)
+        from burnctl.cli import _SPINNER
+        assert any(ch in joined for ch in _SPINNER)
+
+
+class TestStampSpinner:
+    """Unit tests for _stamp_spinner."""
+
+    _TS = "2026-03-29 14:23:07"
+
+    def test_replaces_date_with_provided_timestamp(self):
+        from burnctl.cli import _stamp_spinner
+        report = "some data\n  Generated: 2026-03-29\n"
+        result = _stamp_spinner(report, 0, self._TS)
+        assert self._TS in result
+        # Original date-only should be gone
+        assert "2026-03-29\n" not in result
+
+    def test_timestamp_is_fixed_not_live(self):
+        from burnctl.cli import _stamp_spinner
+        report = "  Generated: 2026-03-29\n"
+        r1 = _stamp_spinner(report, 0, self._TS)
+        r2 = _stamp_spinner(report, 5, self._TS)
+        # Timestamp portion should be identical across ticks
+        assert self._TS in r1
+        assert self._TS in r2
+
+    def test_spinner_cycles(self):
+        from burnctl.cli import _stamp_spinner, _SPINNER
+        report = "  Generated: 2026-03-29\n"
+        for i in range(len(_SPINNER)):
+            result = _stamp_spinner(report, i, self._TS)
+            assert _SPINNER[i] in result
+
+    def test_spinner_after_timestamp_with_spacing(self):
+        from burnctl.cli import _stamp_spinner, _SPINNER
+        report = "  Generated: 2026-03-29\n"
+        result = _stamp_spinner(report, 0, self._TS)
+        assert "   " + _SPINNER[0] in result
+
+    def test_with_ansi_wrapping(self):
+        from burnctl.cli import _stamp_spinner, _SPINNER
+        report = "  \033[2mGenerated: 2026-03-29\033[0m\n"
+        result = _stamp_spinner(report, 3, self._TS)
+        assert _SPINNER[3] in result
+        assert "\033[0m" in result
+
+    def test_no_generated_line_unchanged(self):
+        from burnctl.cli import _stamp_spinner
+        report = "no footer here\n"
+        result = _stamp_spinner(report, 0, self._TS)
+        assert result == report
+
+
+class TestTopModeDispatch:
+    """Verify --top-mode dispatches to _watch_loop."""
+
+    def test_top_mode_calls_watch_loop(self):
+        from burnctl.cli import main as _main
+        from burnctl.config import DEFAULTS as _DEFAULTS
+
+        with patch("burnctl.cli._resolve_collectors",
+                   return_value=[FakeCollector()]), \
+             patch("burnctl.config.load",
+                   return_value=dict(_DEFAULTS)), \
+             patch("burnctl.cli._watch_loop") as mock_watch:
+            sys.argv = ["burnctl", "--top-mode"]
+            _main()
+        mock_watch.assert_called_once()
+        # interval should be 10 (default)
+        call_args = mock_watch.call_args[0][0]
+        assert call_args.watch == 10
+
+    def test_top_mode_custom_interval(self):
+        from burnctl.cli import main as _main
+        from burnctl.config import DEFAULTS as _DEFAULTS
+
+        with patch("burnctl.cli._resolve_collectors",
+                   return_value=[FakeCollector()]), \
+             patch("burnctl.config.load",
+                   return_value=dict(_DEFAULTS)), \
+             patch("burnctl.cli._watch_loop") as mock_watch:
+            sys.argv = ["burnctl", "--top-mode", "30"]
+            _main()
+        mock_watch.assert_called_once()
+        call_args = mock_watch.call_args[0][0]
+        assert call_args.watch == 30
+
 
 # ── --since / --until flags ──────────────────────────────────────────
 
@@ -1668,8 +1777,9 @@ class TestWatchModeEdgeCases:
              patch("sys.stdout.isatty", return_value=True):
             _watch_loop(args, config, collectors)
 
-        # interval = max(1, 0) = 1
-        assert sleep_vals == [1]
+        # interval = max(1, 0) = 1; monotonic adjustment makes it ~1.0
+        assert len(sleep_vals) == 1
+        assert 0.5 < sleep_vals[0] <= 1.0
 
     def test_watch_interval_negative_clamped_to_1(self):
         """Watch with interval=-5 should be clamped to 1."""
@@ -1698,7 +1808,8 @@ class TestWatchModeEdgeCases:
              patch("sys.stdout.isatty", return_value=True):
             _watch_loop(args, config, collectors)
 
-        assert sleep_vals == [1]
+        assert len(sleep_vals) == 1
+        assert 0.5 < sleep_vals[0] <= 1.0
 
     def test_watch_exits_cleanly_on_system_exit(self):
         """Watch mode should handle SystemExit by re-raising after cleanup."""

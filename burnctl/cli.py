@@ -5,6 +5,9 @@ Claude Code, Gemini CLI, and other supported agents.
 """
 
 import argparse
+import os
+import re
+import signal
 import sys
 import time
 import webbrowser
@@ -134,7 +137,15 @@ def _build_parser():
         "-w", "--watch",
         type=int,
         metavar="SECS",
-        help="Refresh every N seconds",
+        help="Refresh every N seconds (alias for --top-mode)",
+    )
+    other_group.add_argument(
+        "--top-mode",
+        type=int,
+        nargs="?",
+        const=10,
+        metavar="SECS",
+        help="Live dashboard with countdown (default: 10s refresh)",
     )
 
     # Subcommands
@@ -420,48 +431,122 @@ def main():
 
     collectors = _resolve_collectors(args)
 
-    if args.watch:
+    top_interval = getattr(args, "top_mode", None) or args.watch
+    if top_interval:
+        args.watch = top_interval  # normalize for _watch_loop
         _watch_loop(args, config, collectors)
     else:
         output = _render_report(args, config, collectors)
         print(output)
 
 
+# Pattern matching the "Generated: YYYY-MM-DD" footer line (with or
+# without ANSI wrapping).  Used by _watch_loop to stamp a live spinner.
+_GENERATED_RE = re.compile(r"(Generated:\s*)\d{4}-\d{2}-\d{2}([ \t]*\S*)")
+
+# Braille-dot spinner — smooth rotation, one frame per second.
+_SPINNER = "\u280b\u2819\u2839\u2838\u283c\u2834\u2826\u2827\u2807\u280f"
+
+
+def _stamp_spinner(report, tick, generated_at):
+    """Replace the ``Generated:`` date with a fixed timestamp + spinner.
+
+    *generated_at* is the time string captured when the report was last
+    rendered.  Only the spinner changes each tick.
+
+    Uses a callable replacement to avoid regex backreference injection
+    if *generated_at* ever contains special characters.
+    """
+    dot = _SPINNER[tick % len(_SPINNER)]
+
+    def _repl(m):
+        return m.group(1) + generated_at + "   " + dot + m.group(2)
+
+    return _GENERATED_RE.sub(_repl, report, count=1)
+
+
 def _watch_loop(args, config, collectors):
-    """Continuously re-render the report every N seconds.
+    """Continuously re-render the report with a live spinner.
 
     Uses the alternate screen buffer and cursor-home rewriting so the
     display updates atomically — no visible blank gap between refreshes,
     similar to ``top`` or ``htop``.
+
+    The ``Generated:`` footer shows the real data-refresh timestamp
+    plus a spinning dot that ticks every second to show liveness.
+    A monotonic clock keeps the 1-second tick accurate regardless of
+    how long data collection or rendering takes.
     """
+    from datetime import datetime as _dt
+
     interval = max(1, args.watch)
     use_alt_screen = hasattr(sys.stdout, "isatty") and sys.stdout.isatty()
 
     if use_alt_screen:
-        # Enter alternate screen buffer; hide cursor during redraws
         sys.stdout.write("\033[?1049h\033[?25l")
         sys.stdout.flush()
 
+    # Handle Ctrl-Z (SIGTSTP) gracefully: exit alt-screen before
+    # suspending, re-enter on resume.  Without this the terminal is
+    # left in a garbled state when the process is backgrounded.
+    old_tstp = None
+    old_cont = None
+    if use_alt_screen and hasattr(signal, "SIGTSTP"):
+        def _on_suspend(signum, frame):
+            sys.stdout.write("\033[?25h\033[?1049l")
+            sys.stdout.flush()
+            signal.signal(signal.SIGTSTP, signal.SIG_DFL)
+            os.kill(os.getpid(), signal.SIGTSTP)
+
+        def _on_resume(signum, frame):
+            sys.stdout.write("\033[?1049h\033[?25l")
+            sys.stdout.flush()
+            signal.signal(signal.SIGTSTP, _on_suspend)
+
+        old_tstp = signal.signal(signal.SIGTSTP, _on_suspend)
+        old_cont = signal.signal(signal.SIGCONT, _on_resume)
+
     try:
+        cached_output = ""
+        generated_at = ""
+        remaining = 0
+        tick = 0
+        next_tick = time.monotonic()
+
         while True:
-            output = _render_report(args, config, collectors)
+            if remaining <= 0:
+                generated_at = _dt.now().strftime("%Y-%m-%d %H:%M:%S")
+                cached_output = _render_report(args, config, collectors)
+                remaining = interval
+
+            frame = _stamp_spinner(cached_output, tick, generated_at)
 
             if use_alt_screen:
-                # Atomic redraw: cursor home → content → clear leftover
                 sys.stdout.write("\033[H")
-                sys.stdout.write(output)
+                sys.stdout.write(frame)
                 sys.stdout.write("\n\033[J")
                 sys.stdout.flush()
             else:
-                # Non-tty: simple clear + print (no escape sequences)
                 sys.stdout.write("\033[2J\033[H")
                 sys.stdout.flush()
-                print(output)
+                print(frame)
 
-            time.sleep(interval)
+            # Sleep only the remainder of the 1-second tick so render
+            # time doesn't cause drift.
+            next_tick += 1
+            sleep_for = next_tick - time.monotonic()
+            if sleep_for > 0:
+                time.sleep(sleep_for)
+
+            remaining -= 1
+            tick += 1
     except KeyboardInterrupt:
         pass
     finally:
         if use_alt_screen:
             sys.stdout.write("\033[?25h\033[?1049l")
             sys.stdout.flush()
+        if old_tstp is not None:
+            signal.signal(signal.SIGTSTP, old_tstp)
+        if old_cont is not None:
+            signal.signal(signal.SIGCONT, old_cont)
