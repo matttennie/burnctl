@@ -698,10 +698,10 @@ def render_full(stats, simple=False, use_color=True, theme="gradient"):
         styled_parts = []
         raw_parts = []
         for a in agents:
-            name = a["name"][:col_w].center(col_w)
+            name = a["name"][:col_w].rjust(col_w)
             if a.get("inactive"):
                 suffix = " (inactive)"
-                name_raw = (a["name"] + suffix)[:col_w].center(col_w)
+                name_raw = (a["name"] + suffix)[:col_w].rjust(col_w)
                 styled_parts.append(th.muted(name_raw))
                 raw_parts.append(name_raw)
             else:
@@ -823,7 +823,7 @@ def render_full(stats, simple=False, use_color=True, theme="gradient"):
             ),
         )
         # Value ratio bars
-        vr_bar_w = max(8, col_w - 6)
+        vr_bar_w = max(6, int((col_w - 6) * 2 / 3))
         vr_cells = []
         vr_raw_cells = []
         for a in agents:
@@ -915,24 +915,62 @@ def render_full(stats, simple=False, use_color=True, theme="gradient"):
                 in_p = f"${in_rate:g}/M"
                 out_p = f"${out_rate:g}/M"
 
-                # Compact layout: name bar pct  Total  In  Out
+                # Anchor Tot/In/Out at the far right, and let the bar consume
+                # the variable middle space so rows always use the full frame.
                 in_s = fmt_short(inp)
                 out_s = fmt_short(out)
                 total_s = fmt_short(total)
+                model_line_w = box_w - 4
+                pct_w = 4
+                metric_gap = 4
+                post_name_gap = 3
+                total_cell = f"Tot: {total_s:>6}"
+                in_cell = f"In: {in_s:>6} {in_p:>6}"
+                out_cell = f"Out:{out_s:>6} {out_p:>6}"
+                meta_gap = 2
+                right_block = (
+                    f"{total_cell}"
+                    f"{' ' * metric_gap}{in_cell}"
+                    f"{' ' * metric_gap}{out_cell}"
+                )
+                available_w = model_line_w - 4
+                min_bar_w = 4
+                fixed_w = (
+                    post_name_gap
+                    + 1
+                    + pct_w
+                    + meta_gap
+                    + len(right_block)
+                )
+                preferred_name_w = max(24, int(model_line_w * 0.40))
+                name_w = min(
+                    preferred_name_w,
+                    max(12, available_w - fixed_w - min_bar_w),
+                )
+                short_disp = short[:name_w]
+                bar_w = max(min_bar_w, available_w - name_w - fixed_w)
+                mini_filled = int(bar_w * pct / 100)
+                mini_empty = bar_w - mini_filled
+                bar = th.agent_model_bar(
+                    mini_filled, mini_empty, short, a.get("id", ""),
+                )
+                fill_chars = _CH_FILL * mini_filled
+                empty_chars = _CH_EMPTY * mini_empty
                 detail = (
-                    f"    {short:<14}"
-                    + fill_chars + empty_chars
-                    + f" {pct_label:>4}"
-                    + f"  Tot:{total_s:>6}"
-                    + f"  In:{in_s:>6} {in_p:>6}"
-                    + f"  Out:{out_s:>6} {out_p:>6}"
+                    f"    {short_disp:<{name_w}}"
+                    f"{' ' * post_name_gap}{fill_chars}{empty_chars}"
+                    f" {pct_label:>{pct_w}}"
+                    f"{' ' * meta_gap}"
+                    f"{right_block}"
                 )
                 detail_styled = (
-                    f"    {th.muted(f'{short:<14}')}{bar}"
-                    f" {pct_label:>4}"
-                    f"  {th.muted('Tot:')}{total_s:>6}"
-                    f"  {th.muted('In:')}{in_s:>6} {th.muted(in_p):>6}"
-                    f"  {th.muted('Out:')}{out_s:>6} {th.muted(out_p):>6}"
+                    f"    {th.muted(f'{short_disp:<{name_w}}')}"
+                    f"{' ' * post_name_gap}{bar}"
+                    f" {pct_label:>{pct_w}}"
+                    f"{' ' * meta_gap}"
+                    f"{th.muted('Tot:')} {total_s:>6}"
+                    f"{' ' * metric_gap}{th.muted('In:')} {in_s:>6} {th.muted(in_p):>6}"
+                    f"{' ' * metric_gap}{th.muted('Out:')}{out_s:>6} {th.muted(out_p):>6}"
                 )
                 model_rows.append((total, short, detail_styled, detail))
             for _total, _short, detail_styled, detail in sorted(
