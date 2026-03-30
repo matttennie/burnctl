@@ -4,6 +4,12 @@ Each agent has its own pricing table (or delegates to an external package).
 ``get_agent_pricing`` is the single entry-point for the rest of burnctl.
 """
 
+import json
+import os
+import time
+import urllib.error
+import urllib.request
+
 # ── Gemini (per-million-token rates, USD) ────────────────────────
 
 GEMINI_PRICING = {
@@ -28,6 +34,95 @@ OPENAI_PRICING = {
     "o3-mini": {"input": 1.10, "output": 4.40},
     "codex-mini": {"input": 1.50, "output": 6.0},
 }
+
+_OPENROUTER_MODELS_URL = "https://openrouter.ai/api/v1/models"
+_OPENROUTER_KEY_ENV_VARS = (
+    "OPENROUTER_MGMT_API_KEY",
+    "OPENROUTER_API_KEY",
+    "OPENROUTER_ORCHARD_API_KEY",
+)
+_OPENROUTER_PRICING_TTL_SECONDS = 60
+_OPENROUTER_PRICING_CACHE = None
+_OPENROUTER_PRICING_CACHE_TS = 0.0
+
+
+def _openrouter_api_key():
+    for name in _OPENROUTER_KEY_ENV_VARS:
+        value = os.environ.get(name, "").strip()
+        if value:
+            return value
+    return ""
+
+
+def _float_or_none(value):
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _get_openrouter_pricing():
+    global _OPENROUTER_PRICING_CACHE, _OPENROUTER_PRICING_CACHE_TS
+    now = time.time()
+    if (
+        _OPENROUTER_PRICING_CACHE is not None
+        and (now - _OPENROUTER_PRICING_CACHE_TS) < _OPENROUTER_PRICING_TTL_SECONDS
+    ):
+        return dict(_OPENROUTER_PRICING_CACHE)
+
+    headers = {
+        "Accept": "application/json",
+        "User-Agent": "burnctl/0.1.0",
+    }
+    api_key = _openrouter_api_key()
+    if api_key:
+        headers["Authorization"] = "Bearer " + api_key
+
+    req = urllib.request.Request(_OPENROUTER_MODELS_URL, headers=headers)
+    pricing = {}
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            payload = json.loads(resp.read().decode("utf-8"))
+    except (urllib.error.URLError, urllib.error.HTTPError, ValueError, OSError):
+        if _OPENROUTER_PRICING_CACHE is not None:
+            return dict(_OPENROUTER_PRICING_CACHE)
+        _OPENROUTER_PRICING_CACHE = {}
+        _OPENROUTER_PRICING_CACHE_TS = now
+        return {}
+
+    rows = payload.get("data", [])
+    if not isinstance(rows, list):
+        if _OPENROUTER_PRICING_CACHE is not None:
+            return dict(_OPENROUTER_PRICING_CACHE)
+        _OPENROUTER_PRICING_CACHE = {}
+        _OPENROUTER_PRICING_CACHE_TS = now
+        return {}
+
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        model_id = row.get("id")
+        pricing_obj = row.get("pricing", {})
+        if not model_id or not isinstance(pricing_obj, dict):
+            continue
+        prompt = _float_or_none(pricing_obj.get("prompt"))
+        completion = _float_or_none(pricing_obj.get("completion"))
+        if prompt is None and completion is None:
+            continue
+        entry = {}
+        if prompt is not None:
+            entry["input"] = prompt * 1_000_000
+        if completion is not None:
+            entry["output"] = completion * 1_000_000
+        reasoning = _float_or_none(pricing_obj.get("internal_reasoning"))
+        if reasoning is not None:
+            entry["reasoning"] = reasoning * 1_000_000
+        if entry:
+            pricing[str(model_id)] = entry
+
+    _OPENROUTER_PRICING_CACHE = pricing
+    _OPENROUTER_PRICING_CACHE_TS = now
+    return dict(pricing)
 
 
 def get_agent_pricing(agent_id):
@@ -58,6 +153,9 @@ def get_agent_pricing(agent_id):
 
     if agent_id == "codex":
         return dict(OPENAI_PRICING)
+
+    if agent_id == "openrouter":
+        return _get_openrouter_pricing()
 
     if agent_id == "aider":
         # Aider tracks costs internally; no external pricing table needed.

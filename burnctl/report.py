@@ -497,6 +497,7 @@ def aggregate_stats(
             "first_session": first_session,
             "total_messages": stats.get("total_messages", 0),
             "total_sessions": stats.get("total_sessions", 0),
+            "activity_through": stats.get("activity_through", ""),
         }
         agents.append(agent_data)
         total_period_cost += period_cost
@@ -535,6 +536,29 @@ def fmt_short(n):
     return str(n)
 
 
+def fmt_rate_per_million(rate):
+    """Format a per-million-token rate with useful precision."""
+    try:
+        rate = float(rate)
+    except (TypeError, ValueError):
+        return "$0/M"
+    if rate == 0:
+        return "$0/M"
+    if abs(rate) >= 10 and rate == int(rate):
+        return "$%d/M" % int(rate)
+    if abs(rate) >= 1:
+        text = "%.2f" % rate
+        if text.endswith("00"):
+            text = text[:-3]
+        return "$%s/M" % text
+    text = "%.3f" % rate
+    whole, frac = text.split(".", 1)
+    frac = frac.rstrip("0")
+    if len(frac) < 2:
+        frac = frac.ljust(2, "0")
+    return "$%s.%s/M" % (whole, frac)
+
+
 def _strip_ansi(text):
     """Remove ANSI escape sequences from *text*."""
     return _ANSI_RE.sub("", text)
@@ -570,6 +594,23 @@ def _visible_period_cost(stats):
     return round(
         sum(a.get("period_cost", 0.0) for a in _visible_report_agents(stats.get("agents", []))),
         2,
+    )
+
+
+def _openrouter_activity_note(stats):
+    """Return a freshness note for OpenRouter activity-backed data."""
+    latest_day = ""
+    for agent in _visible_report_agents(stats.get("agents", [])):
+        if agent.get("id") != "openrouter":
+            continue
+        latest_day = agent.get("activity_through", "") or ""
+        if latest_day:
+            break
+    if not latest_day:
+        return ""
+    return (
+        "OpenRouter source: provider daily activity aggregates through %s UTC; current UTC day is not live."
+        % latest_day
     )
 
 
@@ -912,8 +953,8 @@ def render_full(stats, simple=False, use_color=True, theme="gradient"):
                     mp = agent_pricing.get(stripped, {})
                 in_rate = mp.get("input", 0)
                 out_rate = mp.get("output", 0)
-                in_p = f"${in_rate:g}/M"
-                out_p = f"${out_rate:g}/M"
+                in_p = fmt_rate_per_million(in_rate)
+                out_p = fmt_rate_per_million(out_rate)
 
                 # Anchor Tot/In/Out at the far right, and let the bar consume
                 # the variable middle space so rows always use the full frame.
@@ -983,6 +1024,9 @@ def render_full(stats, simple=False, use_color=True, theme="gradient"):
     lines.append(box_bottom())
 
     # Footer
+    activity_note = _openrouter_activity_note(stats)
+    if activity_note:
+        lines.append(f"  {th.muted(activity_note)}")
     today_str = stats["today"]
     lines.append(f"  {th.muted(f'Generated: {today_str}')}")
     lines.append("")
@@ -1184,6 +1228,11 @@ def render_accessible(stats):
                     f"input {fmt(usage.get('inputTokens', 0))}, "
                     f"output {fmt(usage.get('outputTokens', 0))}"
                 )
+        lines.append("")
+
+    activity_note = _openrouter_activity_note(stats)
+    if activity_note:
+        lines.append(activity_note)
         lines.append("")
 
     lines.append(f"Report date: {stats['today']}")

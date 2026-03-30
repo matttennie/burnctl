@@ -228,6 +228,7 @@ class OpenRouterCollector(BaseCollector):
         period_cost = 0.0
         period_model_usage = {}
         period_endpoints = set()
+        latest_activity_day = None
 
         observed_messages = 0
         observed_endpoints = set()
@@ -238,6 +239,8 @@ class OpenRouterCollector(BaseCollector):
             day = _parse_activity_day(row.get("date"))
             if day is None:
                 continue
+            if latest_activity_day is None or day.date() > latest_activity_day:
+                latest_activity_day = day.date()
 
             requests = _int_or(row.get("requests"))
             prompt_tokens = _int_or(row.get("prompt_tokens"))
@@ -294,6 +297,9 @@ class OpenRouterCollector(BaseCollector):
             "tool_calls": 0,
             "observed_messages": observed_messages,
             "observed_sessions": len(observed_endpoints),
+            "activity_through": (
+                latest_activity_day.isoformat() if latest_activity_day else ""
+            ),
         }
 
 

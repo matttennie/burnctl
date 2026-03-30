@@ -5,9 +5,14 @@ of GEMINI_PRICING and OPENAI_PRICING, and ensures returned dicts are copies.
 Python 3.8 compatible -- no walrus operator, no match/case.
 """
 
+import json
 from unittest.mock import patch
 
-from burnctl.pricing import get_agent_pricing, GEMINI_PRICING, OPENAI_PRICING
+from burnctl.pricing import (
+    get_agent_pricing,
+    GEMINI_PRICING,
+    OPENAI_PRICING,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -109,6 +114,104 @@ class TestGetAgentPricingUnknown:
         result = get_agent_pricing("unknown_agent_xyz")
         assert result == {}
         assert isinstance(result, dict)
+
+
+class TestGetAgentPricingOpenRouter:
+    def test_returns_models_api_pricing(self):
+        payload = {
+            "data": [
+                {
+                    "id": "minimax/minimax-m2.7",
+                    "pricing": {
+                        "prompt": "0.0000003",
+                        "completion": "0.0000012",
+                        "internal_reasoning": "0.0000012",
+                    },
+                },
+            ],
+        }
+
+        class _Resp:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def read(self):
+                return json.dumps(payload).encode("utf-8")
+
+        import burnctl.pricing as pricing_mod
+        pricing_mod._OPENROUTER_PRICING_CACHE = None
+        with patch("burnctl.pricing.urllib.request.urlopen", return_value=_Resp()):
+            result = get_agent_pricing("openrouter")
+
+        assert result["minimax/minimax-m2.7"]["input"] == 0.30
+        assert result["minimax/minimax-m2.7"]["output"] == 1.20
+        assert result["minimax/minimax-m2.7"]["reasoning"] == 1.20
+
+    def test_returns_empty_dict_on_fetch_failure(self):
+        import burnctl.pricing as pricing_mod
+        pricing_mod._OPENROUTER_PRICING_CACHE = None
+        pricing_mod._OPENROUTER_PRICING_CACHE_TS = 0
+        with patch(
+            "burnctl.pricing.urllib.request.urlopen",
+            side_effect=OSError("offline"),
+        ):
+            result = get_agent_pricing("openrouter")
+
+        assert result == {}
+
+    def test_refreshes_stale_cache(self):
+        payload = {
+            "data": [
+                {
+                    "id": "minimax/minimax-m2.7",
+                    "pricing": {
+                        "prompt": "0.0000003",
+                        "completion": "0.0000012",
+                    },
+                },
+            ],
+        }
+
+        class _Resp:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def read(self):
+                return json.dumps(payload).encode("utf-8")
+
+        import burnctl.pricing as pricing_mod
+        pricing_mod._OPENROUTER_PRICING_CACHE = {
+            "minimax/minimax-m2.7": {"input": 0.10, "output": 0.20},
+        }
+        pricing_mod._OPENROUTER_PRICING_CACHE_TS = 0
+        with patch("burnctl.pricing.time.time", return_value=10_000), \
+             patch("burnctl.pricing.urllib.request.urlopen", return_value=_Resp()):
+            result = get_agent_pricing("openrouter")
+
+        assert result["minimax/minimax-m2.7"]["input"] == 0.30
+        assert result["minimax/minimax-m2.7"]["output"] == 1.20
+
+    def test_stale_cache_survives_refresh_failure(self):
+        import burnctl.pricing as pricing_mod
+        pricing_mod._OPENROUTER_PRICING_CACHE = {
+            "minimax/minimax-m2.7": {"input": 0.30, "output": 1.20},
+        }
+        pricing_mod._OPENROUTER_PRICING_CACHE_TS = 0
+        with patch("burnctl.pricing.time.time", return_value=10_000), \
+             patch(
+                 "burnctl.pricing.urllib.request.urlopen",
+                 side_effect=OSError("offline"),
+             ):
+            result = get_agent_pricing("openrouter")
+
+        assert result["minimax/minimax-m2.7"]["input"] == 0.30
+        assert result["minimax/minimax-m2.7"]["output"] == 1.20
 
 
 # ---------------------------------------------------------------------------

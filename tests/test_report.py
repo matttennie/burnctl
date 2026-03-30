@@ -18,6 +18,7 @@ from burnctl.report import (
     compute_period,
     export_csv,
     fmt,
+    fmt_rate_per_million,
     fmt_usd,
     render_accessible,
     render_compact,
@@ -551,6 +552,21 @@ class TestFmtUsd:
         assert fmt_usd(-42.5) == "$-42.50"
 
 
+class TestFmtRatePerMillion:
+    def test_zero(self):
+        assert fmt_rate_per_million(0) == "$0/M"
+
+    def test_two_decimal_precision(self):
+        assert fmt_rate_per_million(0.3) == "$0.30/M"
+        assert fmt_rate_per_million(1.2) == "$1.20/M"
+
+    def test_three_decimal_precision_when_needed(self):
+        assert fmt_rate_per_million(0.075) == "$0.075/M"
+
+    def test_whole_number_compacts(self):
+        assert fmt_rate_per_million(15) == "$15/M"
+
+
 # ── _strip_ansi ──────────────────────────────────────────────────
 
 
@@ -831,6 +847,50 @@ class TestRenderFull:
         stats = _make_stats(today="2025-03-01")
         result = render_full(stats, use_color=False)
         assert "2025-03-01" in result
+
+    @patch("os.get_terminal_size")
+    def test_openrouter_activity_note_in_footer(self, mock_term):
+        mock_term.return_value = os.terminal_size((120, 40))
+        stats = _make_stats(agents=[
+            _make_agent_data(
+                id="openrouter",
+                name="OpenRouter",
+                plan_name="pay-as-you-go",
+                plan_price=0.0,
+                activity_through="2026-03-29",
+                model_usage={},
+            ),
+        ])
+        result = render_full(stats, use_color=False)
+        assert (
+            "OpenRouter source: provider daily activity aggregates through 2026-03-29 UTC; current UTC day is not live."
+            in result
+        )
+
+    @patch("os.get_terminal_size")
+    @patch("burnctl.pricing.get_agent_pricing")
+    def test_openrouter_model_prices_use_real_precision(self, mock_get_pricing, mock_term):
+        mock_term.return_value = os.terminal_size((140, 40))
+        mock_get_pricing.return_value = {
+            "minimax/minimax-m2.7": {"input": 0.30, "output": 1.20},
+        }
+        stats = _make_stats(agents=[
+            _make_agent_data(
+                id="openrouter",
+                name="OpenRouter",
+                plan_name="pay-as-you-go",
+                plan_price=0.0,
+                model_usage={
+                    "minimax/minimax-m2.7": {
+                        "inputTokens": 1_000_000,
+                        "outputTokens": 2_000_000,
+                    },
+                },
+            ),
+        ])
+        result = render_full(stats, use_color=False)
+        assert "$0.30/M" in result
+        assert "$1.20/M" in result
 
     @patch("os.get_terminal_size")
     def test_system_total_for_multi_agent(self, mock_term):
@@ -1131,6 +1191,23 @@ class TestRenderAccessible:
         stats = _make_stats(today="2025-03-01")
         result = render_accessible(stats)
         assert "Report date: 2025-03-01" in result
+
+    def test_openrouter_activity_note(self):
+        stats = _make_stats(agents=[
+            _make_agent_data(
+                id="openrouter",
+                name="OpenRouter",
+                plan_name="pay-as-you-go",
+                plan_price=0.0,
+                activity_through="2026-03-29",
+                model_usage={},
+            ),
+        ])
+        result = render_accessible(stats)
+        assert (
+            "OpenRouter source: provider daily activity aggregates through 2026-03-29 UTC; current UTC day is not live."
+            in result
+        )
 
     def test_first_session_and_totals(self):
         stats = _make_stats()

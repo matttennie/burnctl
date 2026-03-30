@@ -2157,6 +2157,7 @@ class TestOpenRouterCollector:
         assert stats["total_sessions"] is None
         assert stats["model_usage"]["minimax/minimax-m2.7"]["inputTokens"] == 20000000
         assert stats["model_usage"]["minimax/minimax-m2.7"]["outputTokens"] == 14000000
+        assert stats["activity_through"] == "2026-03-11"
 
     def test_returns_none_when_activity_denied(self, monkeypatch):
         monkeypatch.setenv("OPENROUTER_MGMT_API_KEY", "sk-test")
