@@ -13,6 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Local OpenRouter request ledger at `~/.local/share/burnctl/openrouter-usage.jsonl`
 - Safe OpenRouter-only shell export helper via `burnctl proxy openrouter --print-shell`
 - Proxy environment safety checks via `burnctl proxy openrouter --doctor`
+- `burnctl setup openrouter` for explicit one-time installation
+- Automatic OpenRouter bootstrap on normal interactive runs when keys are present and setup is missing
 
 ### Changed
 

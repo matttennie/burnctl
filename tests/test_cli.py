@@ -207,6 +207,18 @@ class TestBuildParser:
         assert args.command == "upgrade"
         assert args.upgrade_all is True
 
+    def test_setup_subcommand(self):
+        parser = self._get_parser()
+        args = parser.parse_args(["setup", "openrouter"])
+        assert args.command == "setup"
+        assert args.provider == "openrouter"
+
+    def test_setup_status_flag(self):
+        parser = self._get_parser()
+        args = parser.parse_args(["setup", "openrouter", "--status"])
+        assert args.command == "setup"
+        assert args.status is True
+
     def test_proxy_subcommand(self):
         parser = self._get_parser()
         args = parser.parse_args(["proxy", "openrouter"])
@@ -732,6 +744,26 @@ class TestHandleProxy:
         assert "Warning: OPENAI_BASE_URL points at the burnctl proxy." in out
 
 
+class TestHandleSetup:
+    def test_status(self):
+        from burnctl.cli import _handle_setup
+
+        args = argparse.Namespace(provider="openrouter", status=True)
+        with patch("burnctl.cli._proxy_doctor") as mock_doctor:
+            _handle_setup(args)
+        mock_doctor.assert_called_once()
+
+    def test_install(self, capsys):
+        from burnctl.cli import _handle_setup
+
+        args = argparse.Namespace(provider="openrouter", status=False)
+        with patch("burnctl.openrouter_setup.install") as mock_install:
+            _handle_setup(args)
+        mock_install.assert_called_once()
+        out = capsys.readouterr().out
+        assert "Installed burnctl OpenRouter live tracking." in out
+
+
 # ── _render_report ───────────────────────────────────────────────────
 
 
@@ -938,6 +970,14 @@ class TestMain:
             main()
         mock_handle.assert_called_once()
 
+    def test_setup_subcommand_dispatches(self):
+        from burnctl.cli import main
+
+        with patch("sys.argv", ["burnctl", "setup", "openrouter"]), \
+             patch("burnctl.cli._handle_setup") as mock_handle:
+            main()
+        mock_handle.assert_called_once()
+
     def test_report_with_mocked_collectors(self, capsys):
         from burnctl.cli import main
 
@@ -954,11 +994,35 @@ class TestMain:
 
         with patch("sys.argv", ["burnctl"]), \
              patch("burnctl.config.load", return_value=fake_config), \
+             patch("burnctl.cli.maybe_auto_setup", return_value=(False, "")), \
              patch("burnctl.cli._resolve_collectors", return_value=[c1]), \
              patch("burnctl.cli._render_report", return_value="report output"):
             main()
         out = capsys.readouterr().out
         assert "report output" in out
+
+    def test_auto_setup_notice_on_normal_run(self, capsys):
+        from burnctl.cli import main
+
+        fake_config = {
+            "billing_day": 10,
+            "billing_interval": "mo",
+            "claude_plan": "pro",
+            "theme": "gradient",
+            "no_color": False,
+            "simple": False,
+            "compact": False,
+        }
+        c1 = FakeCollector(cid="alpha", available=True)
+
+        with patch("sys.argv", ["burnctl"]), \
+             patch("burnctl.config.load", return_value=fake_config), \
+             patch("burnctl.cli.maybe_auto_setup", return_value=(True, "bootstrapped")), \
+             patch("burnctl.cli._resolve_collectors", return_value=[c1]), \
+             patch("burnctl.cli._render_report", return_value="report output"):
+            main()
+        err = capsys.readouterr().err
+        assert "bootstrapped" in err
 
     def test_billing_day_zero_via_main(self, capsys):
         """End-to-end: -b 0 should exit with error."""

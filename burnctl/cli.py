@@ -16,6 +16,13 @@ from shlex import quote
 from burnctl import __version__
 from burnctl.collectors import ALL_COLLECTORS
 from burnctl.config import DEFAULTS, THEMES
+from burnctl.openrouter_setup import (
+    PROXY_HOST,
+    PROXY_PORT,
+    maybe_auto_setup,
+    print_setup_shell,
+    setup_status,
+)
 
 _COLLECTOR_MAP = {c.id: c for c in ALL_COLLECTORS}
 
@@ -188,6 +195,20 @@ def _build_parser():
         "--all", dest="upgrade_all",
         action="store_true",
         help="Open upgrade pages for all agents",
+    )
+
+    setup = sub.add_parser(
+        "setup", help="Install or inspect one-time integration helpers",
+    )
+    setup.add_argument(
+        "provider",
+        choices=["openrouter"],
+        help="Integration to set up",
+    )
+    setup.add_argument(
+        "--status",
+        action="store_true",
+        help="Show current setup status",
     )
 
     proxy = sub.add_parser(
@@ -401,6 +422,8 @@ def _handle_proxy(args):
 
 def _proxy_shell_exports(host, port):
     """Return shell exports that only redirect OpenRouter-aware clients."""
+    if host == PROXY_HOST and port == PROXY_PORT:
+        return print_setup_shell()
     proxy_url = "http://%s:%s" % (host, port)
     return "\n".join([
         "# Route only OpenRouter-aware clients through the burnctl proxy.",
@@ -412,17 +435,22 @@ def _proxy_shell_exports(host, port):
 
 def _proxy_doctor(host, port, ledger_path):
     """Print current proxy environment state and common safety warnings."""
-    from burnctl.openrouter_ledger import LEDGER_FILE
-
+    status = setup_status()
     proxy_url = "http://%s:%s" % (host, port)
-    effective_ledger = ledger_path or os.environ.get("BURNCTL_OPENROUTER_LEDGER") or LEDGER_FILE
-    openrouter_base = os.environ.get("OPENROUTER_BASE_URL") or "(unset)"
-    openai_base = os.environ.get("OPENAI_BASE_URL") or "(unset)"
+    effective_ledger = ledger_path or status["ledger_file"]
+    openrouter_base = status["openrouter_base_url"] or "(unset)"
+    openai_base = status["openai_base_url"] or "(unset)"
 
     print("OpenRouter proxy target: %s" % proxy_url)
     print("Ledger path: %s" % effective_ledger)
+    print("Env file: %s" % status["env_file"])
+    print("LaunchAgent: %s" % status["launch_agent_file"])
+    print("Shell: %s" % (status["shell"] or "(unknown)"))
     print("OPENROUTER_BASE_URL: %s" % openrouter_base)
     print("OPENAI_BASE_URL: %s" % openai_base)
+    print("Env file installed: %s" % ("yes" if status["env_file_exists"] else "no"))
+    print("LaunchAgent installed: %s" % ("yes" if status["launch_agent_exists"] else "no"))
+    print("~/.zshrc hooked: %s" % ("yes" if status["zshrc_hooked"] else "no"))
 
     if openrouter_base == proxy_url:
         print("Status: OpenRouter-aware clients are configured to use the proxy.")
@@ -445,6 +473,22 @@ def _proxy_doctor(host, port, ledger_path):
         print(
             "Safety: OPENAI_BASE_URL is unset, so native OpenAI-compatible clients stay direct by default."
         )
+
+
+def _handle_setup(args):
+    if args.provider != "openrouter":
+        print("Only OpenRouter setup is supported right now.", file=sys.stderr)
+        sys.exit(1)
+    from burnctl.openrouter_setup import install
+
+    if args.status:
+        _proxy_doctor(PROXY_HOST, PROXY_PORT, None)
+        return
+
+    install()
+    print("Installed burnctl OpenRouter live tracking.")
+    print("New shells will pick up OPENROUTER_BASE_URL automatically.")
+    print("OPENAI_BASE_URL remains untouched.")
 
 
 # ── Report rendering ────────────────────────────────────────────────
@@ -543,6 +587,10 @@ def main():
         _handle_upgrade(args, ALL_COLLECTORS)
         return
 
+    if args.command == "setup":
+        _handle_setup(args)
+        return
+
     if args.command == "proxy":
         _handle_proxy(args)
         return
@@ -552,6 +600,10 @@ def main():
 
     config = load_config()
     config = _merge_config(args, config)
+
+    bootstrapped, message = maybe_auto_setup()
+    if bootstrapped and message:
+        print(message, file=sys.stderr)
 
     collectors = _resolve_collectors(args)
 

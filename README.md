@@ -62,6 +62,8 @@ burnctl -w 30       # Refresh every 30 seconds
 burnctl proxy openrouter
 burnctl proxy openrouter --print-shell
 burnctl proxy openrouter --doctor
+burnctl setup openrouter
+burnctl setup openrouter --status
 ```
 
 ## OpenRouter Accuracy
@@ -78,7 +80,31 @@ The ledger file lives at:
 ~/.local/share/burnctl/openrouter-usage.jsonl
 ```
 
-Start the proxy:
+Normal `burnctl` runs now auto-bootstrap the OpenRouter integration on macOS when:
+
+- an OpenRouter API key is present
+- the proxy setup is missing
+- the run is interactive
+
+That one-time bootstrap installs:
+
+- a LaunchAgent that keeps the local OpenRouter proxy running
+- a shell snippet that sets only `OPENROUTER_BASE_URL`
+- no global `OPENAI_BASE_URL` override
+
+You can also run the setup explicitly:
+
+```bash
+burnctl setup openrouter
+```
+
+Check setup health:
+
+```bash
+burnctl setup openrouter --status
+```
+
+Run the proxy directly:
 
 ```bash
 burnctl proxy openrouter
@@ -101,6 +127,7 @@ burnctl proxy openrouter --doctor
 Important:
 
 - `burnctl` does not automatically proxy Anthropic/Claude, Google/Gemini, or native OpenAI/Codex clients.
+- The automatic setup only targets OpenRouter-aware clients and leaves native Claude, Gemini, and Codex subscription flows alone.
 - OpenRouter current-day usage is only truly live for traffic that actually goes through the burnctl proxy.
 - If no proxied traffic has been logged yet, the OpenRouter row remains provider-daily, not realtime.
 
