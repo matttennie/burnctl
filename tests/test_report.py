@@ -796,6 +796,28 @@ class TestRenderFull:
         assert "MODEL BREAKDOWN" in result
 
     @patch("os.get_terminal_size")
+    def test_harness_hidden_from_top_report_but_kept_in_model_breakdown(self, mock_term):
+        mock_term.return_value = os.terminal_size((140, 40))
+        claude = _make_agent_data(id="claude", name="Claude")
+        aider = _make_agent_data(
+            id="aider",
+            name="Aider",
+            period_cost=7.0,
+            model_usage={
+                "openrouter/anthropic/claude-sonnet-4": {
+                    "inputTokens": 1200,
+                    "outputTokens": 3400,
+                },
+            },
+        )
+        stats = _make_stats(agents=[claude, aider], total_period_cost=19.5)
+        result = render_full(stats, use_color=False)
+        top_section, _, model_section = result.partition("MODEL BREAKDOWN")
+        assert "Claude" in top_section
+        assert "Aider" not in top_section
+        assert "Aider" in model_section
+
+    @patch("os.get_terminal_size")
     def test_no_model_breakdown_when_empty(self, mock_term):
         mock_term.return_value = os.terminal_size((120, 40))
         agent = _make_agent_data(model_usage={})
@@ -853,7 +875,7 @@ class TestModelBreakdownTokenDisplay:
 
     @patch("os.get_terminal_size")
     def test_shows_in_out_columns(self, mock_term):
-        """Each model row shows In: and Out: token counts."""
+        """Each model row shows total, input, and output token counts."""
         mock_term.return_value = os.terminal_size((120, 40))
         agent = _make_agent_data(
             output_tokens=1000000,
@@ -870,6 +892,7 @@ class TestModelBreakdownTokenDisplay:
         )
         stats = _make_stats(agents=[agent])
         result = render_full(stats, use_color=False)
+        assert "Tot:" in result
         assert "In:" in result
         assert "Out:" in result
         assert "500.0K" in result
@@ -1021,6 +1044,15 @@ class TestRenderCompact:
         parts = result.split(" | ")
         assert len(parts) == 3  # A, B, Total
 
+    def test_harness_agents_filtered_from_compact_summary(self):
+        claude = _make_agent_data(id="claude", name="Claude", period_cost=10.0)
+        aider = _make_agent_data(id="aider", name="Aider", period_cost=5.0)
+        stats = _make_stats(agents=[claude, aider], total_period_cost=15.0)
+        result = render_compact(stats)
+        assert "Claude: $10.00" in result
+        assert "Aider" not in result
+        assert "Total" not in result
+
 
 # ── render_accessible ────────────────────────────────────────────
 
@@ -1106,6 +1138,27 @@ class TestRenderAccessible:
         assert "First session: 2024-06-15" in result
         assert "All-time messages: 500" in result
         assert "All-time sessions: 50" in result
+
+    def test_accessible_filters_harness_from_main_and_lists_model_breakdown(self):
+        claude = _make_agent_data(id="claude", name="Claude", period_cost=10.0)
+        aider = _make_agent_data(
+            id="aider",
+            name="Aider",
+            period_cost=5.0,
+            model_usage={
+                "openrouter/anthropic/claude-sonnet-4": {
+                    "inputTokens": 1000,
+                    "outputTokens": 2000,
+                },
+            },
+        )
+        stats = _make_stats(agents=[claude, aider], total_period_cost=15.0)
+        result = render_accessible(stats)
+        main_section, _, model_section = result.partition("Model breakdown:")
+        assert "Agent: Claude" in main_section
+        assert "Agent: Aider" not in main_section
+        assert "Aider" in model_section
+        assert "total 3,000" in model_section
 
 
 # ── export_csv ───────────────────────────────────────────────────
@@ -1344,12 +1397,10 @@ class TestInactiveAgents:
 
     @patch("os.get_terminal_size")
     def test_render_full_inactive_shows_inactive_in_header(self, mock_term):
-        """render_full should show '(inactive)' in the column header
-        for inactive agents."""
+        """Visible inactive agents should be labeled in the header."""
         mock_term.return_value = os.terminal_size((120, 40))
-        active = _make_agent_data(id="claude", name="Claude")
-        inactive = _make_inactive_agent(id="idle", name="Idle")
-        stats = _make_stats(agents=[active, inactive])
+        inactive = _make_inactive_agent(id="openrouter", name="OpenRouter")
+        stats = _make_stats(agents=[inactive])
 
         result = render_full(stats, use_color=False)
 
@@ -1391,9 +1442,9 @@ class TestInactiveAgents:
         assert len(result) > 0
 
     def test_render_compact_inactive(self):
-        """render_compact should include inactive agents with $0.00."""
-        active = _make_agent_data(name="Claude", period_cost=10.0)
-        inactive = _make_inactive_agent(name="Idle")
+        """render_compact should filter hidden inactive agents."""
+        active = _make_agent_data(id="claude", name="Claude", period_cost=10.0)
+        inactive = _make_inactive_agent(id="idle", name="Idle")
         stats = _make_stats(
             agents=[active, inactive], total_period_cost=10.0,
         )
@@ -1401,19 +1452,19 @@ class TestInactiveAgents:
         result = render_compact(stats)
 
         assert "Claude: $10.00" in result
-        assert "Idle: $0.00" in result
-        assert "Total: $10.00" in result
+        assert "Idle" not in result
+        assert "Total" not in result
 
     def test_render_accessible_inactive(self):
-        """render_accessible should include inactive agents without crashing."""
-        active = _make_agent_data(name="Claude")
-        inactive = _make_inactive_agent(name="Idle")
+        """render_accessible should filter hidden inactive agents."""
+        active = _make_agent_data(id="claude", name="Claude")
+        inactive = _make_inactive_agent(id="idle", name="Idle")
         stats = _make_stats(agents=[active, inactive])
 
         result = render_accessible(stats)
 
         assert "Agent: Claude" in result
-        assert "Agent: Idle" in result
+        assert "Agent: Idle" not in result
         assert "\033[" not in result
 
     def test_render_json_inactive(self):

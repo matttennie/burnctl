@@ -6,6 +6,7 @@ access.  Python 3.8 compatible -- no walrus operator, no match/case.
 
 import json
 import os
+import urllib.error
 from datetime import datetime, timezone
 from unittest.mock import patch, mock_open, MagicMock
 
@@ -1742,6 +1743,7 @@ class TestCodexGetStatsEdgeCases:
 
 from burnctl.collectors.api_usage import (
     ApiUsageCollector,
+    OpenRouterCollector,
     _parse_ts as _parse_ts_api,
     _parse_entry,
 )
@@ -2092,6 +2094,88 @@ class TestApiUsageCollectorPlanInfo:
     def test_billing_day_from_config(self):
         info = ApiUsageCollector("openrouter", "OpenRouter").get_plan_info({"billing_day": 15})
         assert info["billing_day"] == 15
+
+
+class TestOpenRouterCollector:
+    def test_unavailable_without_api_key(self, monkeypatch):
+        monkeypatch.delenv("OPENROUTER_MGMT_API_KEY", raising=False)
+        monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+        monkeypatch.delenv("OPENROUTER_ORCHARD_API_KEY", raising=False)
+        assert OpenRouterCollector().is_available() is False
+
+    def test_stats_from_activity_and_credits(self, monkeypatch):
+        monkeypatch.setenv("OPENROUTER_MGMT_API_KEY", "sk-test")
+
+        def fake_get_json(path, api_key):
+            assert api_key == "sk-test"
+            if path == "/activity":
+                return {
+                    "data": [
+                        {
+                            "date": "2026-03-11 00:00:00",
+                            "model": "minimax/minimax-m2.7",
+                            "prompt_tokens": 20000000,
+                            "completion_tokens": 14000000,
+                            "usage": 12.34,
+                            "requests": 42,
+                            "endpoint_id": "or-1",
+                        },
+                        {
+                            "date": "2026-03-01",
+                            "model": "openai/gpt-4.1",
+                            "prompt_tokens": 1000,
+                            "completion_tokens": 500,
+                            "usage": 0.25,
+                            "requests": 2,
+                            "endpoint_id": "or-2",
+                        },
+                    ],
+                }
+            if path == "/credits":
+                return {"data": {"total_usage": 99.99}}
+            raise AssertionError(path)
+
+        monkeypatch.setattr(
+            "burnctl.collectors.api_usage._openrouter_get_json",
+            fake_get_json,
+        )
+
+        stats = OpenRouterCollector().get_stats(
+            datetime(2026, 3, 10),
+            datetime(2026, 4, 10),
+            datetime(2026, 3, 13),
+        )
+
+        assert stats is not None
+        assert stats["messages"] == 42
+        assert stats["sessions"] == 1
+        assert stats["input_tokens"] == 20000000
+        assert stats["output_tokens"] == 14000000
+        assert stats["period_cost"] == pytest.approx(12.34)
+        assert stats["alltime_cost"] == pytest.approx(99.99)
+        assert stats["total_messages"] is None
+        assert stats["total_sessions"] is None
+        assert stats["model_usage"]["minimax/minimax-m2.7"]["inputTokens"] == 20000000
+        assert stats["model_usage"]["minimax/minimax-m2.7"]["outputTokens"] == 14000000
+
+    def test_returns_none_when_activity_denied(self, monkeypatch):
+        monkeypatch.setenv("OPENROUTER_MGMT_API_KEY", "sk-test")
+
+        def fake_get_json(path, api_key):
+            raise urllib.error.HTTPError(path, 403, "forbidden", {}, None)
+
+        monkeypatch.setattr(
+            "burnctl.collectors.api_usage._openrouter_get_json",
+            fake_get_json,
+        )
+
+        stats = OpenRouterCollector().get_stats(
+            datetime(2026, 3, 10),
+            datetime(2026, 4, 10),
+            datetime(2026, 3, 13),
+        )
+
+        assert stats is None
 
 
 # ---------------------------------------------------------------------------

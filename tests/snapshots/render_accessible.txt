@@ -32,4 +32,11 @@ Agent: Gemini CLI
 
 System total period cost: $8.73
 
+Model breakdown:
+  Claude Code
+    claude-opus-4-6: total 2,234,712, input 1,200,000, output 1,034,712
+    claude-opus-4-5: total 973,958, input 500,000, output 473,958
+  Gemini CLI
+    gemini-2.5-flash: total 145,000, input 100,000, output 45,000
+
 Report date: 2026-03-13

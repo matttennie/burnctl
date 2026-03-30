@@ -398,6 +398,8 @@ def aggregate_stats(
             start, end, today_dt = compute_period(billing_day, offset)
         stats = collector.get_stats(start, end, ref_date)
         if stats is None:
+            if collector.id == "openrouter":
+                continue
             if collector.is_available():
                 # Agent detected but no activity in this period
                 total_days = (end - start).days
@@ -519,6 +521,11 @@ def fmt_usd(n):
     return f"${n:,.2f}"
 
 
+def _fmt_optional_int(n):
+    """Comma-format an int or return ``N/A`` when unknown."""
+    return "N/A" if n is None else fmt(n)
+
+
 def fmt_short(n):
     """Compact number: 1,234 → 1.2K, 1,234,567 → 1.2M."""
     if n >= 1_000_000:
@@ -531,6 +538,39 @@ def fmt_short(n):
 def _strip_ansi(text):
     """Remove ANSI escape sequences from *text*."""
     return _ANSI_RE.sub("", text)
+
+
+_TOP_REPORT_AGENT_IDS = {
+    "claude",
+    "gemini",
+    "codex",
+    "openrouter",
+    "huggingface",
+    "anthropic",
+    "openai",
+}
+
+
+def _visible_report_agents(agents):
+    """Return the agents shown in the top-level report grid.
+
+    The main grid is intentionally limited to primary CLI agents and
+    provider rows. If none of the incoming agents match that set, fall
+    back to showing everything so ad hoc tests and unknown collectors
+    still render sensibly.
+    """
+    preferred = [
+        a for a in agents if a.get("id", "") in _TOP_REPORT_AGENT_IDS
+    ]
+    return preferred or list(agents)
+
+
+def _visible_period_cost(stats):
+    """Return the period-cost total for agents shown in the main grid."""
+    return round(
+        sum(a.get("period_cost", 0.0) for a in _visible_report_agents(stats.get("agents", []))),
+        2,
+    )
 
 
 # ── Full multi-column renderer ──────────────────────────────────────
@@ -557,9 +597,10 @@ def render_full(stats, simple=False, use_color=True, theme="gradient"):
         base_th = _FallbackTheme(use_color)
     th = _MultiAgentTheme(base_th)
 
-    agents = stats["agents"]
-    if not agents:
+    all_agents = stats["agents"]
+    if not all_agents:
         return "No agent data available."
+    agents = _visible_report_agents(all_agents)
 
     # ── Layout metrics ──
     try:
@@ -754,13 +795,13 @@ def render_full(stats, simple=False, use_color=True, theme="gradient"):
     lines.append(
         _row_bold(
             "Messages",
-            [fmt(a["total_messages"]) for a in agents],
+            [_fmt_optional_int(a["total_messages"]) for a in agents],
         ),
     )
     lines.append(
         _row_bold(
             "Sessions",
-            [fmt(a["total_sessions"]) for a in agents],
+            [_fmt_optional_int(a["total_sessions"]) for a in agents],
         ),
     )
     lines.append(
@@ -819,7 +860,7 @@ def render_full(stats, simple=False, use_color=True, theme="gradient"):
         lines.append(box_line(f"{label_str}{cols}", raw_len=len(raw)))
 
     # ── MODEL BREAKDOWN ──
-    agents_with_models = [a for a in agents if a.get("model_usage")]
+    agents_with_models = [a for a in all_agents if a.get("model_usage")]
     if agents_with_models:
         from burnctl.pricing import get_agent_pricing
 
@@ -841,6 +882,7 @@ def render_full(stats, simple=False, use_color=True, theme="gradient"):
             )
             _CH_FILL = "\u2593"
             _CH_EMPTY = "\u2591"
+            model_rows = []
             for model, usage in model_usage.items():
                 # Shorten model name for display
                 short = model
@@ -850,6 +892,7 @@ def render_full(stats, simple=False, use_color=True, theme="gradient"):
 
                 inp = usage.get("inputTokens", 0)
                 out = usage.get("outputTokens", 0)
+                total = inp + out
                 pct = int(out * 100 / total_out) if total_out else 0
                 pct_label = "<1%" if pct == 0 and out > 0 else "%d%%" % pct
 
@@ -872,25 +915,31 @@ def render_full(stats, simple=False, use_color=True, theme="gradient"):
                 in_p = f"${in_rate:g}/M"
                 out_p = f"${out_rate:g}/M"
 
-                # Compact layout: name bar pct  In: NNN $X/M  Out: NNN $X/M
+                # Compact layout: name bar pct  Total  In  Out
                 in_s = fmt_short(inp)
                 out_s = fmt_short(out)
+                total_s = fmt_short(total)
                 detail = (
                     f"    {short:<14}"
                     + fill_chars + empty_chars
                     + f" {pct_label:>4}"
+                    + f"  Tot:{total_s:>6}"
                     + f"  In:{in_s:>6} {in_p:>6}"
                     + f"  Out:{out_s:>6} {out_p:>6}"
                 )
                 detail_styled = (
                     f"    {th.muted(f'{short:<14}')}{bar}"
                     f" {pct_label:>4}"
+                    f"  {th.muted('Tot:')}{total_s:>6}"
                     f"  {th.muted('In:')}{in_s:>6} {th.muted(in_p):>6}"
                     f"  {th.muted('Out:')}{out_s:>6} {th.muted(out_p):>6}"
                 )
-                lines.append(
-                    box_line(detail_styled, raw_len=len(detail)),
-                )
+                model_rows.append((total, short, detail_styled, detail))
+            for _total, _short, detail_styled, detail in sorted(
+                model_rows,
+                key=lambda row: (-row[0], row[1].lower()),
+            ):
+                lines.append(box_line(detail_styled, raw_len=len(detail)))
             lines.append(box_empty())
 
     lines.append(box_bottom())
@@ -1016,18 +1065,19 @@ def render_json(stats):
 
 def render_compact(stats):
     """Single-line summary: ``Agent: $X.XX | Agent: $Y.YY | Total: $Z.ZZ``."""
-    agents = stats.get("agents", [])
+    agents = _visible_report_agents(stats.get("agents", []))
     if not agents:
         return "No agent data available."
     parts = [f"{a['name']}: {fmt_usd(a['period_cost'])}" for a in agents]
     if len(agents) > 1:
-        parts.append(f"Total: {fmt_usd(stats['total_period_cost'])}")
+        parts.append(f"Total: {fmt_usd(_visible_period_cost(stats))}")
     return " | ".join(parts)
 
 
 def render_accessible(stats):
     """Plain-text, screen-reader friendly. No box drawing, no ANSI."""
-    agents = stats.get("agents", [])
+    all_agents = stats.get("agents", [])
+    agents = _visible_report_agents(all_agents)
     if not agents:
         return "No agent data available."
 
@@ -1063,18 +1113,39 @@ def render_accessible(stats):
         lines.append(f"  Value ratio: {a['value_ratio']:.1f}x")
         lines.append(f"  First session: {a['first_session']}")
         lines.append(
-            f"  All-time messages: {fmt(a['total_messages'])}",
+            f"  All-time messages: {_fmt_optional_int(a['total_messages'])}",
         )
         lines.append(
-            f"  All-time sessions: {fmt(a['total_sessions'])}",
+            f"  All-time sessions: {_fmt_optional_int(a['total_sessions'])}",
         )
         lines.append("")
 
     if len(agents) > 1:
         lines.append(
             f"System total period cost: "
-            f"{fmt_usd(stats['total_period_cost'])}",
+            f"{fmt_usd(_visible_period_cost(stats))}",
         )
+        lines.append("")
+
+    model_agents = [a for a in all_agents if a.get("model_usage")]
+    if model_agents:
+        lines.append("Model breakdown:")
+        for agent in model_agents:
+            lines.append(f"  {agent['name']}")
+            rows = []
+            for model, usage in agent["model_usage"].items():
+                total = usage.get("inputTokens", 0) + usage.get("outputTokens", 0)
+                rows.append((total, model, usage))
+            for total, model, usage in sorted(
+                rows,
+                key=lambda row: (-row[0], row[1].lower()),
+            ):
+                lines.append(
+                    "    "
+                    f"{model}: total {fmt(total)}, "
+                    f"input {fmt(usage.get('inputTokens', 0))}, "
+                    f"output {fmt(usage.get('outputTokens', 0))}"
+                )
         lines.append("")
 
     lines.append(f"Report date: {stats['today']}")
