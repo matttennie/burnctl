@@ -189,6 +189,30 @@ def _build_parser():
         help="Open upgrade pages for all agents",
     )
 
+    proxy = sub.add_parser(
+        "proxy", help="Run a local proxy for request-level instrumentation",
+    )
+    proxy.add_argument(
+        "provider",
+        choices=["openrouter"],
+        help="Provider to proxy",
+    )
+    proxy.add_argument(
+        "--host",
+        default="127.0.0.1",
+        help="Bind host (default: 127.0.0.1)",
+    )
+    proxy.add_argument(
+        "--port",
+        type=int,
+        default=8765,
+        help="Bind port (default: 8765)",
+    )
+    proxy.add_argument(
+        "--ledger",
+        help="Override request ledger path",
+    )
+
     return parser
 
 
@@ -349,6 +373,15 @@ def _handle_upgrade(args, collectors):
             webbrowser.open(url)
 
 
+def _handle_proxy(args):
+    if args.provider != "openrouter":
+        print("Only OpenRouter proxying is supported right now.", file=sys.stderr)
+        sys.exit(1)
+    from burnctl.openrouter_proxy import run_proxy
+
+    run_proxy(host=args.host, port=args.port, ledger_path=args.ledger)
+
+
 # ── Report rendering ────────────────────────────────────────────────
 
 def _render_report(args, config, collectors):
@@ -443,6 +476,10 @@ def main():
     # Subcommand: upgrade
     if args.command == "upgrade":
         _handle_upgrade(args, ALL_COLLECTORS)
+        return
+
+    if args.command == "proxy":
+        _handle_proxy(args)
         return
 
     # Default: report

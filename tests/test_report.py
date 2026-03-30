@@ -868,6 +868,26 @@ class TestRenderFull:
         )
 
     @patch("os.get_terminal_size")
+    def test_openrouter_activity_note_mentions_live_ledger(self, mock_term):
+        mock_term.return_value = os.terminal_size((120, 40))
+        stats = _make_stats(agents=[
+            _make_agent_data(
+                id="openrouter",
+                name="OpenRouter",
+                plan_name="pay-as-you-go",
+                plan_price=0.0,
+                activity_through="2026-03-29",
+                live_ledger=True,
+                model_usage={},
+            ),
+        ])
+        result = render_full(stats, use_color=False)
+        assert (
+            "OpenRouter source: provider daily activity aggregates through 2026-03-29 UTC plus local request ledger after that cutoff."
+            in result
+        )
+
+    @patch("os.get_terminal_size")
     @patch("burnctl.pricing.get_agent_pricing")
     def test_openrouter_model_prices_use_real_precision(self, mock_get_pricing, mock_term):
         mock_term.return_value = os.terminal_size((140, 40))
@@ -1206,6 +1226,24 @@ class TestRenderAccessible:
         result = render_accessible(stats)
         assert (
             "OpenRouter source: provider daily activity aggregates through 2026-03-29 UTC; current UTC day is not live."
+            in result
+        )
+
+    def test_openrouter_activity_note_with_live_ledger(self):
+        stats = _make_stats(agents=[
+            _make_agent_data(
+                id="openrouter",
+                name="OpenRouter",
+                plan_name="pay-as-you-go",
+                plan_price=0.0,
+                activity_through="2026-03-29",
+                live_ledger=True,
+                model_usage={},
+            ),
+        ])
+        result = render_accessible(stats)
+        assert (
+            "OpenRouter source: provider daily activity aggregates through 2026-03-29 UTC plus local request ledger after that cutoff."
             in result
         )
 

@@ -498,6 +498,7 @@ def aggregate_stats(
             "total_messages": stats.get("total_messages", 0),
             "total_sessions": stats.get("total_sessions", 0),
             "activity_through": stats.get("activity_through", ""),
+            "live_ledger": stats.get("live_ledger", False),
         }
         agents.append(agent_data)
         total_period_cost += period_cost
@@ -608,6 +609,16 @@ def _openrouter_activity_note(stats):
             break
     if not latest_day:
         return ""
+    uses_ledger = False
+    for agent in _visible_report_agents(stats.get("agents", [])):
+        if agent.get("id") == "openrouter" and agent.get("live_ledger"):
+            uses_ledger = True
+            break
+    if uses_ledger:
+        return (
+            "OpenRouter source: provider daily activity aggregates through %s UTC plus local request ledger after that cutoff."
+            % latest_day
+        )
     return (
         "OpenRouter source: provider daily activity aggregates through %s UTC; current UTC day is not live."
         % latest_day

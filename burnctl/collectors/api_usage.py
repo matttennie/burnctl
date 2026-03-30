@@ -13,6 +13,7 @@ import urllib.request
 from datetime import datetime
 
 from burnctl.collectors.base import BaseCollector
+from burnctl.openrouter_ledger import load_entries as load_openrouter_ledger
 
 USAGE_FILE = os.path.join(
     os.path.expanduser("~"), ".config", "orchard", "usage.jsonl",
@@ -229,6 +230,8 @@ class OpenRouterCollector(BaseCollector):
         period_model_usage = {}
         period_endpoints = set()
         latest_activity_day = None
+        settled_request_ids = set()
+        ledger_used = False
 
         observed_messages = 0
         observed_endpoints = set()
@@ -248,10 +251,13 @@ class OpenRouterCollector(BaseCollector):
             usage = _float_or(row.get("usage"))
             model = str(row.get("model", "") or row.get("model_name", "") or "Unknown")
             endpoint_id = str(row.get("endpoint_id", ""))
+            request_id = str(row.get("id", "") or row.get("generation_id", ""))
 
             observed_messages += requests
             if endpoint_id:
                 observed_endpoints.add(endpoint_id)
+            if request_id:
+                settled_request_ids.add(request_id)
 
             if not (start_day <= day.date() < end_day):
                 continue
@@ -268,6 +274,38 @@ class OpenRouterCollector(BaseCollector):
             )
             bucket["inputTokens"] += prompt_tokens
             bucket["outputTokens"] += completion_tokens
+
+        ledger_cutoff = None
+        if latest_activity_day is not None:
+            ledger_cutoff = datetime.combine(
+                latest_activity_day,
+                datetime.min.time(),
+            )
+        for entry in load_openrouter_ledger():
+            if entry.get("provider") != "openrouter":
+                continue
+            ts = entry["ts"]
+            if not (start <= ts < end):
+                continue
+            request_id = entry.get("request_id", "")
+            if request_id and request_id in settled_request_ids:
+                continue
+            if ledger_cutoff is not None and ts <= ledger_cutoff:
+                continue
+
+            ledger_used = True
+            period_messages += 1
+            period_input_tokens += entry.get("input_tokens", 0)
+            period_output_tokens += entry.get("output_tokens", 0)
+            period_cost += entry.get("cost", 0.0)
+            if request_id:
+                period_endpoints.add(request_id)
+            bucket = period_model_usage.setdefault(
+                entry.get("model", "Unknown"),
+                {"inputTokens": 0, "outputTokens": 0},
+            )
+            bucket["inputTokens"] += entry.get("input_tokens", 0)
+            bucket["outputTokens"] += entry.get("output_tokens", 0)
 
         alltime_cost = None
         credits_data = credits_resp.get("data", {}) if isinstance(credits_resp, dict) else {}
@@ -300,6 +338,7 @@ class OpenRouterCollector(BaseCollector):
             "activity_through": (
                 latest_activity_day.isoformat() if latest_activity_day else ""
             ),
+            "live_ledger": ledger_used,
         }
 
 

@@ -2158,6 +2158,63 @@ class TestOpenRouterCollector:
         assert stats["model_usage"]["minimax/minimax-m2.7"]["inputTokens"] == 20000000
         assert stats["model_usage"]["minimax/minimax-m2.7"]["outputTokens"] == 14000000
         assert stats["activity_through"] == "2026-03-11"
+        assert stats["live_ledger"] is False
+
+    def test_merges_live_ledger_after_activity_cutoff(self, monkeypatch):
+        monkeypatch.setenv("OPENROUTER_MGMT_API_KEY", "sk-test")
+
+        def fake_get_json(path, api_key):
+            if path == "/activity":
+                return {
+                    "data": [
+                        {
+                            "date": "2026-03-29 00:00:00",
+                            "model": "minimax/minimax-m2.7",
+                            "prompt_tokens": 1000,
+                            "completion_tokens": 500,
+                            "usage": 0.01,
+                            "requests": 1,
+                            "endpoint_id": "or-1",
+                        },
+                    ],
+                }
+            if path == "/credits":
+                return {"data": {"total_usage": 99.99}}
+            raise AssertionError(path)
+
+        monkeypatch.setattr(
+            "burnctl.collectors.api_usage._openrouter_get_json",
+            fake_get_json,
+        )
+        monkeypatch.setattr(
+            "burnctl.collectors.api_usage.load_openrouter_ledger",
+            lambda: [
+                {
+                    "ts": datetime(2026, 3, 30, 12, 0, 0),
+                    "provider": "openrouter",
+                    "model": "minimax/minimax-m2.7",
+                    "request_id": "req-live",
+                    "source": "openrouter-proxy",
+                    "input_tokens": 2000,
+                    "output_tokens": 3000,
+                    "reasoning_tokens": 0,
+                    "cost": 0.02,
+                },
+            ],
+        )
+
+        stats = OpenRouterCollector().get_stats(
+            datetime(2026, 3, 10),
+            datetime(2026, 4, 10),
+            datetime(2026, 3, 30, 13, 0, 0),
+        )
+
+        assert stats["messages"] == 2
+        assert stats["sessions"] == 2
+        assert stats["input_tokens"] == 3000
+        assert stats["output_tokens"] == 3500
+        assert stats["period_cost"] == pytest.approx(0.03)
+        assert stats["live_ledger"] is True
 
     def test_returns_none_when_activity_denied(self, monkeypatch):
         monkeypatch.setenv("OPENROUTER_MGMT_API_KEY", "sk-test")
