@@ -11,6 +11,7 @@ import signal
 import sys
 import time
 import webbrowser
+from shlex import quote
 
 from burnctl import __version__
 from burnctl.collectors import ALL_COLLECTORS
@@ -212,6 +213,16 @@ def _build_parser():
         "--ledger",
         help="Override request ledger path",
     )
+    proxy.add_argument(
+        "--print-shell",
+        action="store_true",
+        help="Print safe shell exports for OpenRouter-only proxying and exit",
+    )
+    proxy.add_argument(
+        "--doctor",
+        action="store_true",
+        help="Check proxy-related environment safety and ledger location",
+    )
 
     return parser
 
@@ -377,9 +388,63 @@ def _handle_proxy(args):
     if args.provider != "openrouter":
         print("Only OpenRouter proxying is supported right now.", file=sys.stderr)
         sys.exit(1)
+    if args.print_shell:
+        print(_proxy_shell_exports(args.host, args.port))
+        return
+    if args.doctor:
+        _proxy_doctor(args.host, args.port, args.ledger)
+        return
     from burnctl.openrouter_proxy import run_proxy
 
     run_proxy(host=args.host, port=args.port, ledger_path=args.ledger)
+
+
+def _proxy_shell_exports(host, port):
+    """Return shell exports that only redirect OpenRouter-aware clients."""
+    proxy_url = "http://%s:%s" % (host, port)
+    return "\n".join([
+        "# Route only OpenRouter-aware clients through the burnctl proxy.",
+        "export OPENROUTER_BASE_URL=%s" % quote(proxy_url),
+        "# Keep generic OpenAI-compatible clients direct unless you opt in explicitly.",
+        "unset OPENAI_BASE_URL",
+    ])
+
+
+def _proxy_doctor(host, port, ledger_path):
+    """Print current proxy environment state and common safety warnings."""
+    from burnctl.openrouter_ledger import LEDGER_FILE
+
+    proxy_url = "http://%s:%s" % (host, port)
+    effective_ledger = ledger_path or os.environ.get("BURNCTL_OPENROUTER_LEDGER") or LEDGER_FILE
+    openrouter_base = os.environ.get("OPENROUTER_BASE_URL") or "(unset)"
+    openai_base = os.environ.get("OPENAI_BASE_URL") or "(unset)"
+
+    print("OpenRouter proxy target: %s" % proxy_url)
+    print("Ledger path: %s" % effective_ledger)
+    print("OPENROUTER_BASE_URL: %s" % openrouter_base)
+    print("OPENAI_BASE_URL: %s" % openai_base)
+
+    if openrouter_base == proxy_url:
+        print("Status: OpenRouter-aware clients are configured to use the proxy.")
+    else:
+        print(
+            "Status: OpenRouter-aware clients are not yet pointing at the proxy."
+        )
+
+    if openai_base == proxy_url:
+        print(
+            "Warning: OPENAI_BASE_URL points at the burnctl proxy. "
+            "This may redirect OpenAI-compatible clients you did not intend to proxy."
+        )
+    elif openai_base != "(unset)":
+        print(
+            "Warning: OPENAI_BASE_URL is set. Verify it is intentional and does not "
+            "redirect unrelated OpenAI-compatible clients."
+        )
+    else:
+        print(
+            "Safety: OPENAI_BASE_URL is unset, so native OpenAI-compatible clients stay direct by default."
+        )
 
 
 # ── Report rendering ────────────────────────────────────────────────

@@ -207,6 +207,26 @@ class TestBuildParser:
         assert args.command == "upgrade"
         assert args.upgrade_all is True
 
+    def test_proxy_subcommand(self):
+        parser = self._get_parser()
+        args = parser.parse_args(["proxy", "openrouter"])
+        assert args.command == "proxy"
+        assert args.provider == "openrouter"
+        assert args.host == "127.0.0.1"
+        assert args.port == 8765
+
+    def test_proxy_print_shell_flag(self):
+        parser = self._get_parser()
+        args = parser.parse_args(["proxy", "openrouter", "--print-shell"])
+        assert args.command == "proxy"
+        assert args.print_shell is True
+
+    def test_proxy_doctor_flag(self):
+        parser = self._get_parser()
+        args = parser.parse_args(["proxy", "openrouter", "--doctor"])
+        assert args.command == "proxy"
+        assert args.doctor is True
+
     def test_version_flag(self):
         parser = self._get_parser()
         with pytest.raises(SystemExit) as exc_info:
@@ -652,6 +672,64 @@ class TestHandleUpgrade:
         mock_open.assert_not_called()
         out = capsys.readouterr().out
         assert "no upgrade URL" in out
+
+
+class TestHandleProxy:
+    def test_print_shell(self, capsys):
+        from burnctl.cli import _handle_proxy
+
+        args = argparse.Namespace(
+            provider="openrouter",
+            host="127.0.0.1",
+            port=8765,
+            ledger=None,
+            print_shell=True,
+            doctor=False,
+        )
+        _handle_proxy(args)
+        out = capsys.readouterr().out
+        assert "export OPENROUTER_BASE_URL=" in out
+        assert "unset OPENAI_BASE_URL" in out
+
+    def test_doctor(self, capsys):
+        from burnctl.cli import _handle_proxy
+
+        args = argparse.Namespace(
+            provider="openrouter",
+            host="127.0.0.1",
+            port=8765,
+            ledger=None,
+            print_shell=False,
+            doctor=True,
+        )
+        with patch.dict("os.environ", {}, clear=True):
+            _handle_proxy(args)
+        out = capsys.readouterr().out
+        assert "OpenRouter proxy target: http://127.0.0.1:8765" in out
+        assert "OPENAI_BASE_URL: (unset)" in out
+
+    def test_doctor_warns_when_openai_base_url_points_to_proxy(self, capsys):
+        from burnctl.cli import _handle_proxy
+
+        args = argparse.Namespace(
+            provider="openrouter",
+            host="127.0.0.1",
+            port=8765,
+            ledger=None,
+            print_shell=False,
+            doctor=True,
+        )
+        with patch.dict(
+            "os.environ",
+            {
+                "OPENROUTER_BASE_URL": "http://127.0.0.1:8765",
+                "OPENAI_BASE_URL": "http://127.0.0.1:8765",
+            },
+            clear=True,
+        ):
+            _handle_proxy(args)
+        out = capsys.readouterr().out
+        assert "Warning: OPENAI_BASE_URL points at the burnctl proxy." in out
 
 
 # ── _render_report ───────────────────────────────────────────────────

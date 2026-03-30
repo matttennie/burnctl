@@ -12,7 +12,8 @@ Aggregates usage data from multiple AI coding agents into a single terminal repo
 | Gemini CLI | Full | `~/.gemini/` session history |
 | OpenAI Codex CLI | Full | `~/.codex/sessions/` JSONL |
 | Aider | Full | `.aider.chat.history.md` |
-| API providers (OpenRouter, HuggingFace, etc.) | Full | `~/.config/orchard/usage.jsonl` |
+| OpenRouter | Full | OpenRouter API activity + optional local request ledger |
+| Other API providers (HuggingFace, etc.) | Full | `~/.config/orchard/usage.jsonl` |
 | Ollama (local) | Detection | Always $0 |
 | Cline, OpenCode, DebGPT | Stub | Planned |
 
@@ -56,7 +57,52 @@ burnctl -P last     # Show previous billing period
 
 # Live dashboard
 burnctl -w 30       # Refresh every 30 seconds
+
+# OpenRouter proxy / request ledger
+burnctl proxy openrouter
+burnctl proxy openrouter --print-shell
+burnctl proxy openrouter --doctor
 ```
+
+## OpenRouter Accuracy
+
+OpenRouter is now handled differently from the other provider rows:
+
+- Settled usage comes from OpenRouter's provider-side daily activity API.
+- Live current-day usage can be merged in from a local request ledger.
+- The local request ledger is populated by running the built-in OpenRouter proxy and routing OpenRouter-aware clients through it.
+
+The ledger file lives at:
+
+```bash
+~/.local/share/burnctl/openrouter-usage.jsonl
+```
+
+Start the proxy:
+
+```bash
+burnctl proxy openrouter
+```
+
+Print safe shell exports for OpenRouter-only proxying:
+
+```bash
+burnctl proxy openrouter --print-shell
+```
+
+That output intentionally sets only `OPENROUTER_BASE_URL` and unsets `OPENAI_BASE_URL` so you do not accidentally redirect native OpenAI-compatible clients you wanted to keep direct.
+
+Check your current environment safety:
+
+```bash
+burnctl proxy openrouter --doctor
+```
+
+Important:
+
+- `burnctl` does not automatically proxy Anthropic/Claude, Google/Gemini, or native OpenAI/Codex clients.
+- OpenRouter current-day usage is only truly live for traffic that actually goes through the burnctl proxy.
+- If no proxied traffic has been logged yet, the OpenRouter row remains provider-daily, not realtime.
 
 ## Configuration
 
@@ -88,6 +134,8 @@ burnctl uses a collector-based architecture. Each AI agent has a collector that 
 burnctl/
 ├── cli.py              # Argument parsing, entry point
 ├── config.py           # Persistent configuration
+├── openrouter_ledger.py# Local OpenRouter request ledger
+├── openrouter_proxy.py # Local OpenRouter logging proxy
 ├── pricing.py          # Multi-agent pricing tables
 ├── report.py           # Aggregation and rendering
 └── collectors/
