@@ -1,6 +1,5 @@
 """Tests for burnctl.openrouter_setup."""
 
-import os
 from unittest.mock import patch
 
 from burnctl import openrouter_setup as setup

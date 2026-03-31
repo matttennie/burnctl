@@ -28,9 +28,15 @@ class TestParseJsonUsage:
 class TestParseSseUsage:
     def test_extracts_usage_from_final_event(self):
         lines = [
-            b'data: {"id":"gen_123","model":"minimax/minimax-m2.7","choices":[{"delta":{"content":"hi"}}]}\n',
+            (
+                b'data: {"id":"gen_123","model":"minimax/minimax-m2.7",'
+                b'"choices":[{"delta":{"content":"hi"}}]}\n'
+            ),
             b'\n',
-            b'data: {"usage":{"prompt_tokens":1000,"completion_tokens":2000,"completion_tokens_details":{"reasoning_tokens":300}}}\n',
+            (
+                b'data: {"usage":{"prompt_tokens":1000,"completion_tokens":2000,'
+                b'"completion_tokens_details":{"reasoning_tokens":300}}}\n'
+            ),
             b'\n',
             b'data: [DONE]\n',
         ]

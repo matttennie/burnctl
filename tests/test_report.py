@@ -883,7 +883,8 @@ class TestRenderFull:
         ])
         result = render_full(stats, use_color=False)
         assert (
-            "OpenRouter source: provider daily activity aggregates through 2026-03-29 UTC plus local request ledger after that cutoff."
+            "OpenRouter source: provider daily activity aggregates through "
+            "2026-03-29 UTC plus local request ledger after that cutoff."
             in result
         )
 
@@ -1243,7 +1244,8 @@ class TestRenderAccessible:
         ])
         result = render_accessible(stats)
         assert (
-            "OpenRouter source: provider daily activity aggregates through 2026-03-29 UTC plus local request ledger after that cutoff."
+            "OpenRouter source: provider daily activity aggregates through "
+            "2026-03-29 UTC plus local request ledger after that cutoff."
             in result
         )
 
