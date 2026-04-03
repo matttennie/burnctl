@@ -14,9 +14,11 @@ import urllib.request
 
 GEMINI_PRICING = {
     "gemini-3.1-pro-preview": {"input": 2.00, "output": 12.0, "cache_read": 0.20},
+    "gemini-3.1-flash-lite": {"input": 0.25, "output": 1.50, "cache_read": 0.025},
     "gemini-3-flash-preview": {"input": 0.50, "output": 3.0, "cache_read": 0.05},
-    "gemini-2.5-pro": {"input": 1.25, "output": 10.0, "cache_read": 0.31},
-    "gemini-2.5-flash": {"input": 0.15, "output": 0.60, "cache_read": 0.04},
+    "gemini-2.5-pro": {"input": 1.25, "output": 10.0, "cache_read": 0.125},
+    "gemini-2.5-flash": {"input": 0.30, "output": 2.50, "cache_read": 0.03},
+    "gemini-2.5-flash-lite": {"input": 0.10, "output": 0.40, "cache_read": 0.01},
     "gemini-2.0-flash": {"input": 0.10, "output": 0.40, "cache_read": 0.025},
     "gemini-2.0-flash-lite": {"input": 0.075, "output": 0.30, "cache_read": 0.02},
 }
@@ -24,15 +26,20 @@ GEMINI_PRICING = {
 # ── OpenAI / Codex (per-million-token rates, USD) ───────────────
 
 OPENAI_PRICING = {
-    "gpt-5.4": {"input": 2.50, "output": 15.0, "cache_read": 0.25},
     "gpt-5.4-pro": {"input": 30.0, "output": 180.0},
-    "gpt-5.3-codex": {"input": 2.50, "output": 15.0, "cache_read": 0.25},
-    "gpt-5.2-codex": {"input": 2.50, "output": 15.0, "cache_read": 0.25},
-    "gpt-4o": {"input": 2.50, "output": 10.0},
-    "gpt-4o-mini": {"input": 0.15, "output": 0.60},
-    "o3": {"input": 10.0, "output": 40.0},
-    "o3-mini": {"input": 1.10, "output": 4.40},
-    "codex-mini": {"input": 1.50, "output": 6.0},
+    "gpt-5.4": {"input": 2.50, "output": 15.0, "cache_read": 0.25},
+    "gpt-5.4-mini": {"input": 0.75, "output": 4.50, "cache_read": 0.075},
+    "gpt-5.4-nano": {"input": 0.20, "output": 1.25, "cache_read": 0.02},
+    "gpt-5.3-chat": {"input": 1.75, "output": 14.0, "cache_read": 0.175},
+    "gpt-5.3-codex": {"input": 1.75, "output": 14.0, "cache_read": 0.175},
+    "gpt-5.2-codex": {"input": 1.75, "output": 14.0, "cache_read": 0.175},
+    "gpt-4o": {"input": 2.50, "output": 10.0, "cache_read": 1.25},
+    "gpt-4o-mini": {"input": 0.15, "output": 0.60, "cache_read": 0.075},
+    "o3-pro": {"input": 20.0, "output": 80.0},
+    "o3": {"input": 2.0, "output": 8.0, "cache_read": 0.50},
+    "o3-mini": {"input": 1.10, "output": 4.40, "cache_read": 0.55},
+    "o4-mini": {"input": 0.55, "output": 2.20, "cache_read": 0.275},
+    "codex-mini": {"input": 0.75, "output": 3.0, "cache_read": 0.025},
 }
 
 _OPENROUTER_MODELS_URL = "https://openrouter.ai/api/v1/models"
@@ -142,10 +149,10 @@ def get_agent_pricing(agent_id):
         except ImportError:
             return {
                 "claude-opus-4-6": {"input": 5.0, "output": 25.0, "cache_read": 0.50, "cache_create": 6.25},
-                "claude-sonnet-4-6": {"input": 1.0, "output": 5.0, "cache_read": 0.10, "cache_create": 1.25},
                 "claude-opus-4-5": {"input": 5.0, "output": 25.0, "cache_read": 0.50, "cache_create": 6.25},
-                "claude-sonnet-4-5": {"input": 1.0, "output": 5.0, "cache_read": 0.10, "cache_create": 1.25},
-                "claude-haiku-4-5": {"input": 0.25, "output": 1.25, "cache_read": 0.025, "cache_create": 0.3125},
+                "claude-sonnet-4-6": {"input": 3.0, "output": 15.0, "cache_read": 0.30, "cache_create": 3.75},
+                "claude-sonnet-4-5": {"input": 3.0, "output": 15.0, "cache_read": 0.30, "cache_create": 3.75},
+                "claude-haiku-4-5": {"input": 1.0, "output": 5.0, "cache_read": 0.10, "cache_create": 1.25},
             }
 
     if agent_id == "gemini":

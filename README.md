@@ -15,7 +15,7 @@ Aggregates usage data from multiple AI coding agents into a single terminal repo
 | OpenRouter | Full | OpenRouter API activity + optional local request ledger |
 | Other API providers (HuggingFace, etc.) | Full | `~/.config/orchard/usage.jsonl` |
 | Ollama (local) | Detection | Always $0 |
-| Cline, OpenCode, DebGPT | Stub | Planned |
+| Cline, OpenCode | Stub | Planned |
 
 ## Installation
 
@@ -54,9 +54,6 @@ burnctl -t classic      # Theme: gradient, classic, colorblind, accessible
 burnctl -p max5x    # Override Claude plan
 burnctl -b 15       # Override billing day
 burnctl -P last     # Show previous billing period
-
-# Live dashboard
-burnctl -w 30       # Refresh every 30 seconds
 
 # OpenRouter proxy / request ledger
 burnctl proxy openrouter
@@ -136,13 +133,14 @@ Important:
 Persistent settings live at `~/.config/burnctl/config.json`.
 
 ```bash
-burnctl config                    # Show all settings
-burnctl config billing_day 15     # Set billing day
-burnctl config claude_plan max5x  # Set Claude plan
-burnctl config theme colorblind   # Set color theme
+burnctl config                        # Show all settings
+burnctl config billing_day 15         # Set default billing day
+burnctl config claude_plan max5x      # Set Claude plan
+burnctl config codex_billing_day 29   # Per-agent billing day (0 = use global)
+burnctl config theme colorblind       # Set color theme
 ```
 
-Available settings: `billing_day`, `billing_interval`, `claude_plan`, `default_agents`, `theme`, `no_color`, `simple`, `compact`.
+Available settings: `billing_day`, `billing_interval`, `claude_plan`, `claude_billing_day`, `gemini_plan`, `gemini_billing_day`, `codex_plan`, `codex_billing_day`, `default_agents`, `theme`, `no_color`, `simple`, `compact`.
 
 ## Upgrade
 

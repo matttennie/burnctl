@@ -46,21 +46,3 @@ class OpenCodeCollector(BaseCollector):
 
     def get_stats(self, start, end, ref_date):
         return None
-
-
-class DebGPTCollector(BaseCollector):
-    """Stub for the DebGPT agent."""
-
-    @property
-    def name(self):
-        return "DebGPT"
-
-    @property
-    def id(self):
-        return "debgpt"
-
-    def is_available(self):
-        return False
-
-    def get_stats(self, start, end, ref_date):
-        return None

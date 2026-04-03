@@ -212,12 +212,12 @@ class TestClaudeGetStats:
             stats = collector.get_stats(start, end, datetime(2026, 3, 13))
 
         # Mar 10: claude-sonnet-4-6 => 5000 tokens at effective rate
-        #   alltime cost for sonnet = (100k*1 + 50k*5 + 10k*0.1 + 5k*1.25)/1M = 0.35725
-        #   effective rate = 0.35725 / 50000 * 1M = 7.145
-        #   period cost = 5000 * 7.145 / 1M = 0.035725
+        #   alltime cost for sonnet = (100k*3 + 50k*15 + 10k*0.3 + 5k*3.75)/1M = 1.07175
+        #   effective rate = 1.07175 / 50000 * 1M = 21.435
+        #   period cost = 5000 * 21.435 / 1M = 0.107175
         # Mar 12: claude-opus-4-6 => 2000 tokens at $25/M (no alltime data, fallback)
         #   period cost = 2000 * 25.0 / 1M = 0.05
-        expected = 0.035725 + 0.05
+        expected = 0.107175 + 0.05
         assert stats["period_cost"] == pytest.approx(expected)
 
     def test_alltime_cost_uses_full_model_usage(self):
@@ -859,7 +859,7 @@ class TestGeminiPlanInfo:
     def test_ai_pro(self):
         info = GeminiCollector().get_plan_info({"gemini_plan": "ai_pro"})
         assert info["plan_name"] == "ai_pro"
-        assert info["plan_price"] == 25
+        assert info["plan_price"] == 19.99
 
     def test_ai_ultra(self):
         info = GeminiCollector().get_plan_info({"gemini_plan": "ai_ultra"})

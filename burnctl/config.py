@@ -17,8 +17,11 @@ DEFAULTS = {
     "simple": False,
     "compact": False,
     "claude_plan": "free",
+    "claude_billing_day": 0,
     "gemini_plan": "none",
+    "gemini_billing_day": 0,
     "codex_plan": "none",
+    "codex_billing_day": 0,
 }
 
 # Theme options: gradient (24-bit gradient), classic (16-color), colorblind, accessible
@@ -33,7 +36,7 @@ PLAN_PRICES = {
 
 GEMINI_PLAN_PRICES = {
     "none": 0,
-    "ai_pro": 25,
+    "ai_pro": 19.99,
     "ai_ultra": 250,
 }
 
@@ -54,9 +57,23 @@ _INTERVAL_ALIASES = {
     "yr": "yr", "year": "yr", "yearly": "yr", "annual": "yr", "annually": "yr",
 }
 
+
+def _valid_agent_billing_day(v):
+    return v == 0 or 1 <= v <= 31
+
+
 # Validation rules: key -> (validator_fn, error_message)
 _VALIDATORS = {
     "billing_day": (lambda v: 1 <= v <= 31, "must be between 1 and 31"),
+    "claude_billing_day": (
+        _valid_agent_billing_day, "must be 0 (use global) or 1-31",
+    ),
+    "gemini_billing_day": (
+        _valid_agent_billing_day, "must be 0 (use global) or 1-31",
+    ),
+    "codex_billing_day": (
+        _valid_agent_billing_day, "must be 0 (use global) or 1-31",
+    ),
     "claude_plan": (
         lambda v: v in PLAN_PRICES,
         f"must be one of: {', '.join(PLAN_PRICES.keys())}",
@@ -96,13 +113,17 @@ def _first_run_hint():
         "  Welcome to burnctl!  A few settings make the report accurate:\n"
         "\n"
         "    burnctl config billing_day  <1-31>   "
-        "  # day your billing period starts\n"
+        "  # default billing day for all agents\n"
         "    burnctl config claude_plan  <plan>    "
         "  # free | pro | max5x | max20x\n"
         "    burnctl config gemini_plan  <plan>    "
         "  # none | ai_pro | ai_ultra\n"
         "    burnctl config codex_plan   <plan>    "
         "  # none | plus | pro\n"
+        "\n"
+        "  Per-agent billing day (0 = use global billing_day):\n"
+        "    burnctl config claude_billing_day 10\n"
+        "    burnctl config codex_billing_day  29\n"
         "\n"
         "  Run `burnctl config` to see all options.\n",
         file=sys.stderr,
@@ -173,6 +194,7 @@ def show():
     print("        burnctl config gemini_plan ai_pro")
     print("        burnctl config codex_plan plus")
     print("        burnctl config billing_day 15")
+    print("        burnctl config codex_billing_day 29  # per-agent (0 = use global)")
 
 
 def set_value(key, value):

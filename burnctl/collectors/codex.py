@@ -457,9 +457,11 @@ class CodexCollector(BaseCollector):
         from burnctl.config import CODEX_PLAN_PRICES
         plan = config.get("codex_plan", "none")
         price = CODEX_PLAN_PRICES.get(plan, 0)
+        agent_bd = config.get("codex_billing_day", 0)
+        bd = agent_bd if agent_bd else config.get("billing_day", 1)
         return {
             "plan_name": plan,
             "plan_price": price,
-            "billing_day": config.get("billing_day", 1),
+            "billing_day": bd,
             "interval": "mo",
         }

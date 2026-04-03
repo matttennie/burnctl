@@ -6,7 +6,7 @@ from burnctl.collectors.codex import CodexCollector
 from burnctl.collectors.aider import AiderCollector
 from burnctl.collectors.local import LocalCollector
 from burnctl.collectors.api_usage import discover_collectors
-from burnctl.collectors.stubs import ClineCollector, OpenCodeCollector, DebGPTCollector
+from burnctl.collectors.stubs import ClineCollector, OpenCodeCollector
 
 ALL_COLLECTORS = [
     ClaudeCollector(),
@@ -17,7 +17,6 @@ ALL_COLLECTORS = [
     LocalCollector(),
     ClineCollector(),
     OpenCodeCollector(),
-    DebGPTCollector(),
 ]
 
 

@@ -67,11 +67,11 @@ class ClaudeCollector(BaseCollector):
         """Hardcoded Claude pricing when claude_usage is not installed."""
         dp = _default_pricing()
         return {
-            "claude-opus-4-6": {"input": 5.0, "output": 25.0, "cache_read": 0.50, "cache_create": 6.25},
-            "claude-sonnet-4-6": {"input": 1.0, "output": 5.0, "cache_read": 0.10, "cache_create": 1.25},
+            "claude-opus-4-6": dp,
             "claude-opus-4-5": dp,
-            "claude-sonnet-4-5": {"input": 1.0, "output": 5.0, "cache_read": 0.10, "cache_create": 1.25},
-            "claude-haiku-4-5": {"input": 0.25, "output": 1.25, "cache_read": 0.025, "cache_create": 0.3125},
+            "claude-sonnet-4-6": {"input": 3.0, "output": 15.0, "cache_read": 0.30, "cache_create": 3.75},
+            "claude-sonnet-4-5": {"input": 3.0, "output": 15.0, "cache_read": 0.30, "cache_create": 3.75},
+            "claude-haiku-4-5": {"input": 1.0, "output": 5.0, "cache_read": 0.10, "cache_create": 1.25},
         }
 
     def _get_pricing_table(self, data):
@@ -377,9 +377,12 @@ class ClaudeCollector(BaseCollector):
         else:
             price = PLAN_PRICES.get(plan, 0)
 
+        agent_bd = config.get("claude_billing_day", 0)
+        bd = agent_bd if agent_bd else config.get("billing_day", 1)
+
         return {
             "plan_name": plan,
             "plan_price": price,
-            "billing_day": config.get("billing_day", 1),
+            "billing_day": bd,
             "interval": interval,
         }

@@ -48,42 +48,6 @@ jobs:
           burnctl -c 2>&1 || true
           burnctl -A 2>&1 || true
 
-  test-debian:
-    runs-on: ubuntu-latest
-    container: debian:bookworm
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: ["3.11"]
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install Python and dependencies
-        run: |
-          apt-get update
-          apt-get install -y python3 python3-pip python3-venv
-          python3 -m pip install --break-system-packages --upgrade pip
-          pip install --break-system-packages flake8 pytest
-          pip install --break-system-packages .
-
-      - name: Lint with flake8
-        run: flake8 burnctl/ tests/
-
-      - name: Run tests
-        run: pytest tests/ -v
-
-      - name: Verify CLI entry points
-        run: |
-          burnctl --version
-          python3 -m burnctl --version
-
-      - name: Test graceful handling without agent data
-        run: |
-          burnctl --aider 2>&1 || true
-          burnctl -j 2>&1 || true
-          burnctl -c 2>&1 || true
-          burnctl -A 2>&1 || true
-
   lint:
     runs-on: ubuntu-latest
     steps:

@@ -12,7 +12,6 @@ burnctl --claude     # Claude only
 burnctl -j           # JSON output
 burnctl -c           # Compact single-line
 burnctl -A           # Accessible / screen-reader
-burnctl -w 30        # Watch mode (refresh every 30s)
 burnctl config       # View/set preferences
 burnctl upgrade      # Open billing pages
 ```

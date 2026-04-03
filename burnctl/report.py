@@ -920,6 +920,9 @@ def render_full(stats, simple=False, use_color=True, theme="gradient"):
         lines.append(box_title("MODEL BREAKDOWN"))
         lines.append(box_empty())
 
+        _CH_FILL = "\u2593"
+        _CH_EMPTY = "\u2591"
+
         for a in agents_with_models:
             lines.append(
                 box_line(
@@ -932,25 +935,59 @@ def render_full(stats, simple=False, use_color=True, theme="gradient"):
             total_out = sum(
                 u.get("outputTokens", 0) for u in model_usage.values()
             )
-            _CH_FILL = "\u2593"
-            _CH_EMPTY = "\u2591"
-            model_rows = []
-            for model, usage in model_usage.items():
-                # Shorten model name for display
+
+            # Pre-pass: shorten all model names and find the longest
+            shortened = {}
+            for model in model_usage:
                 short = model
                 for prefix in ("claude-", "gemini-", "codex-"):
                     short = short.replace(prefix, "")
                 short = re.sub(r"-(\d{8}|latest)$", "", short)
+                shortened[model] = short
 
+            # Compute shared column widths from the longest model name
+            model_line_w = box_w - 4
+            pct_w = 4
+            metric_gap = 4
+            post_name_gap = 3
+            meta_gap = 2
+            # right_block is fixed-width across all rows; measure once.
+            # Price strings (fmt_rate_per_million) can be up to 8 chars,
+            # e.g. "$0.075/M", so budget 8 for each pricing column.
+            price_w = 8
+            sample_right = (
+                f"Tot: {'':>6}"
+                f"{' ' * metric_gap}In: {'':>6} {'':>{price_w}}"
+                f"{' ' * metric_gap}Out:{'':>6} {'':>{price_w}}"
+            )
+            available_w = model_line_w - 4
+            min_bar_w = 4
+            fixed_w = post_name_gap + 1 + pct_w + meta_gap + len(sample_right)
+            max_name_len = max(
+                (len(s) for s in shortened.values()), default=0,
+            )
+            preferred_name_w = max(24, int(model_line_w * 0.40))
+            name_w = min(
+                preferred_name_w,
+                max(12, available_w - fixed_w - min_bar_w),
+            )
+            # Clamp to actual longest name so short names don't waste space
+            name_w = max(12, min(name_w, max_name_len))
+            bar_w = max(min_bar_w, available_w - name_w - fixed_w)
+
+            model_rows = []
+            for model, usage in model_usage.items():
+                short = shortened[model]
                 inp = usage.get("inputTokens", 0)
                 out = usage.get("outputTokens", 0)
+                cache_read = usage.get("cacheReadInputTokens", 0)
+                cache_read += usage.get("cachedTokens", 0)
                 total = inp + out
                 pct = int(out * 100 / total_out) if total_out else 0
                 pct_label = "<1%" if pct == 0 and out > 0 else "%d%%" % pct
 
-                mini_w = 8
-                mini_filled = int(mini_w * pct / 100)
-                mini_empty = mini_w - mini_filled
+                mini_filled = int(bar_w * pct / 100)
+                mini_empty = bar_w - mini_filled
                 bar = th.agent_model_bar(
                     mini_filled, mini_empty, short, a.get("id", ""),
                 )
@@ -967,47 +1004,19 @@ def render_full(stats, simple=False, use_color=True, theme="gradient"):
                 in_p = fmt_rate_per_million(in_rate)
                 out_p = fmt_rate_per_million(out_rate)
 
-                # Anchor Tot/In/Out at the far right, and let the bar consume
-                # the variable middle space so rows always use the full frame.
                 in_s = fmt_short(inp)
                 out_s = fmt_short(out)
                 total_s = fmt_short(total)
-                model_line_w = box_w - 4
-                pct_w = 4
-                metric_gap = 4
-                post_name_gap = 3
                 total_cell = f"Tot: {total_s:>6}"
-                in_cell = f"In: {in_s:>6} {in_p:>6}"
-                out_cell = f"Out:{out_s:>6} {out_p:>6}"
-                meta_gap = 2
+                in_cell = f"In: {in_s:>6} {in_p:>{price_w}}"
+                out_cell = f"Out:{out_s:>6} {out_p:>{price_w}}"
                 right_block = (
                     f"{total_cell}"
                     f"{' ' * metric_gap}{in_cell}"
                     f"{' ' * metric_gap}{out_cell}"
                 )
-                available_w = model_line_w - 4
-                min_bar_w = 4
-                fixed_w = (
-                    post_name_gap
-                    + 1
-                    + pct_w
-                    + meta_gap
-                    + len(right_block)
-                )
-                preferred_name_w = max(24, int(model_line_w * 0.40))
-                name_w = min(
-                    preferred_name_w,
-                    max(12, available_w - fixed_w - min_bar_w),
-                )
+
                 short_disp = short[:name_w]
-                bar_w = max(min_bar_w, available_w - name_w - fixed_w)
-                mini_filled = int(bar_w * pct / 100)
-                mini_empty = bar_w - mini_filled
-                bar = th.agent_model_bar(
-                    mini_filled, mini_empty, short, a.get("id", ""),
-                )
-                fill_chars = _CH_FILL * mini_filled
-                empty_chars = _CH_EMPTY * mini_empty
                 detail = (
                     f"    {short_disp:<{name_w}}"
                     f"{' ' * post_name_gap}{fill_chars}{empty_chars}"
@@ -1015,21 +1024,42 @@ def render_full(stats, simple=False, use_color=True, theme="gradient"):
                     f"{' ' * meta_gap}"
                     f"{right_block}"
                 )
+                # Pre-format pricing to fixed width before ANSI wrapping
+                in_p_pad = f"{in_p:>{price_w}}"
+                out_p_pad = f"{out_p:>{price_w}}"
                 detail_styled = (
                     f"    {th.muted(f'{short_disp:<{name_w}}')}"
                     f"{' ' * post_name_gap}{bar}"
                     f" {pct_label:>{pct_w}}"
                     f"{' ' * meta_gap}"
                     f"{th.muted('Tot:')} {total_s:>6}"
-                    f"{' ' * metric_gap}{th.muted('In:')} {in_s:>6} {th.muted(in_p):>6}"
-                    f"{' ' * metric_gap}{th.muted('Out:')}{out_s:>6} {th.muted(out_p):>6}"
+                    f"{' ' * metric_gap}{th.muted('In:')} {in_s:>6} {th.muted(in_p_pad)}"
+                    f"{' ' * metric_gap}{th.muted('Out:')}{out_s:>6} {th.muted(out_p_pad)}"
                 )
-                model_rows.append((total, short, detail_styled, detail))
-            for _total, _short, detail_styled, detail in sorted(
+
+                # Cache hit line (shown below model row when data exists)
+                cache_line = None
+                cache_line_styled = None
+                if cache_read > 0:
+                    total_input = inp + cache_read
+                    hit_pct = cache_read * 100 / total_input if total_input else 0
+                    cache_tag = f"Cache: {hit_pct:.0f}% hit ({fmt_short(cache_read)} read)"
+                    pad = " " * (name_w + 4)
+                    cache_line = f"    {pad}{cache_tag}"
+                    cache_line_styled = f"    {pad}{th.muted(cache_tag)}"
+
+                model_rows.append(
+                    (total, short, detail_styled, detail,
+                     cache_line_styled, cache_line),
+                )
+            for row in sorted(
                 model_rows,
-                key=lambda row: (-row[0], row[1].lower()),
+                key=lambda r: (-r[0], r[1].lower()),
             ):
-                lines.append(box_line(detail_styled, raw_len=len(detail)))
+                _total, _short, styled, raw, cache_s, cache_r = row
+                lines.append(box_line(styled, raw_len=len(raw)))
+                if cache_r:
+                    lines.append(box_line(cache_s, raw_len=len(cache_r)))
             lines.append(box_empty())
 
     lines.append(box_bottom())

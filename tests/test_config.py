@@ -38,8 +38,11 @@ class TestConstants:
             "simple",
             "compact",
             "claude_plan",
+            "claude_billing_day",
             "gemini_plan",
+            "gemini_billing_day",
             "codex_plan",
+            "codex_billing_day",
         }
         assert set(DEFAULTS.keys()) == expected
 
