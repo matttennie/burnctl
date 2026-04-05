@@ -6,6 +6,7 @@ Each agent has its own pricing table (or delegates to an external package).
 
 import json
 import os
+from typing import Dict, Optional
 import time
 import urllib.error
 import urllib.request
@@ -49,7 +50,7 @@ _OPENROUTER_KEY_ENV_VARS = (
     "OPENROUTER_ORCHARD_API_KEY",
 )
 _OPENROUTER_PRICING_TTL_SECONDS = 60
-_OPENROUTER_PRICING_CACHE = None
+_OPENROUTER_PRICING_CACHE: Optional[Dict[str, Dict[str, float]]] = None
 _OPENROUTER_PRICING_CACHE_TS = 0.0
 
 

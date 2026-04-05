@@ -8,6 +8,7 @@ from Orchard's JSONL usage log when present.
 import json
 import os
 import sys
+from typing import Dict, List
 import urllib.error
 import urllib.request
 from datetime import datetime
@@ -227,7 +228,7 @@ class OpenRouterCollector(BaseCollector):
         period_input_tokens = 0
         period_output_tokens = 0
         period_cost = 0.0
-        period_model_usage = {}
+        period_model_usage: Dict[str, Dict[str, int]] = {}
         period_endpoints = set()
         latest_activity_day = None
         settled_request_ids = set()
@@ -380,7 +381,7 @@ class ApiUsageCollector(BaseCollector):
         period_input_tokens = 0
         period_output_tokens = 0
         period_cost = 0.0
-        period_model_usage = {}
+        period_model_usage: Dict[str, Dict[str, int]] = {}
         period_node_ids = set()
 
         alltime_cost = 0.0
@@ -453,7 +454,7 @@ def discover_collectors(usage_file=None):
         set(e["provider"] for e in entries if e["provider"] != "openrouter")
     )
 
-    collectors = [OpenRouterCollector()]
+    collectors: List[BaseCollector] = [OpenRouterCollector()]
     for pid in providers:
         meta = _PROVIDER_META.get(pid, {})
         display_name = meta.get("name", pid.title())
