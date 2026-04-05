@@ -18,9 +18,9 @@ DEFAULTS = {
     "compact": False,
     "claude_plan": "free",
     "claude_billing_day": 0,
-    "gemini_plan": "none",
+    "gemini_plan": "free",
     "gemini_billing_day": 0,
-    "codex_plan": "none",
+    "codex_plan": "free",
     "codex_billing_day": 0,
 }
 
@@ -35,13 +35,15 @@ PLAN_PRICES = {
 }
 
 GEMINI_PLAN_PRICES = {
-    "none": 0,
+    "free": 0,
+    "ai_plus": 7.99,
     "ai_pro": 19.99,
-    "ai_ultra": 250,
+    "ai_ultra": 249.99,
 }
 
 CODEX_PLAN_PRICES = {
-    "none": 0,
+    "free": 0,
+    "go": 8,
     "plus": 20,
     "pro": 200,
 }

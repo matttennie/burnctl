@@ -852,7 +852,7 @@ class TestGeminiGetStats:
 class TestGeminiPlanInfo:
     def test_default(self):
         info = GeminiCollector().get_plan_info({})
-        assert info["plan_name"] == "none"
+        assert info["plan_name"] == "free"
         assert info["plan_price"] == 0
         assert info["billing_day"] == 1
 
@@ -864,7 +864,7 @@ class TestGeminiPlanInfo:
     def test_ai_ultra(self):
         info = GeminiCollector().get_plan_info({"gemini_plan": "ai_ultra"})
         assert info["plan_name"] == "ai_ultra"
-        assert info["plan_price"] == 250
+        assert info["plan_price"] == 249.99
 
     def test_unknown_plan_defaults_zero(self):
         info = GeminiCollector().get_plan_info({"gemini_plan": "bogus"})
@@ -1420,7 +1420,7 @@ class TestCodexCountHistory:
 class TestCodexPlanInfo:
     def test_default(self):
         info = CodexCollector().get_plan_info({})
-        assert info["plan_name"] == "none"
+        assert info["plan_name"] == "free"
         assert info["plan_price"] == 0
         assert info["billing_day"] == 1
 

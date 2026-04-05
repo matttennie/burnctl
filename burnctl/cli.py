@@ -431,7 +431,8 @@ def _proxy_doctor(host, port, ledger_path):
     print("OPENAI_BASE_URL: %s" % openai_base)
     print("Env file installed: %s" % ("yes" if status["env_file_exists"] else "no"))
     print("LaunchAgent installed: %s" % ("yes" if status["launch_agent_exists"] else "no"))
-    print("~/.zshrc hooked: %s" % ("yes" if status["zshrc_hooked"] else "no"))
+    rc_label = status.get("shell_rc") or "shell rc"
+    print("%s hooked: %s" % (rc_label, "yes" if status["shell_rc_hooked"] else "no"))
 
     if openrouter_base == proxy_url:
         print("Status: OpenRouter-aware clients are configured to use the proxy.")

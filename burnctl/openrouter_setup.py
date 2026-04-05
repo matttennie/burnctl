@@ -19,18 +19,57 @@ LAUNCH_AGENT_FILE = os.path.join(
     "LaunchAgents",
     LAUNCH_AGENT_LABEL + ".plist",
 )
-ZSH_RC = os.path.join(os.path.expanduser("~"), ".zshrc")
+
 RC_BEGIN = "# >>> burnctl openrouter proxy >>>"
 RC_END = "# <<< burnctl openrouter proxy <<<"
-RC_BLOCK = (
-    RC_BEGIN + "\n"
-    + "[ -f %s ] && source %s\n" % (ENV_FILE, ENV_FILE)
-    + RC_END + "\n"
-)
+
+# Shell RC file paths keyed by shell name.
+_SHELL_RC_MAP = {
+    "zsh": os.path.join(os.path.expanduser("~"), ".zshrc"),
+    "bash": os.path.join(os.path.expanduser("~"), ".bashrc"),
+    "fish": os.path.join(
+        os.path.expanduser("~"), ".config", "fish", "conf.d", "burnctl.fish",
+    ),
+}
+
+
+def _detect_shell():
+    """Return the short name of the user's login shell (zsh, bash, fish)."""
+    shell_path = os.environ.get("SHELL", "")
+    basename = os.path.basename(shell_path)
+    if basename in _SHELL_RC_MAP:
+        return basename
+    return ""
+
+
+def _shell_rc_path():
+    """Return the RC file path for the detected shell, or empty string."""
+    shell = _detect_shell()
+    return _SHELL_RC_MAP.get(shell, "")
+
+
+def _rc_block(shell=""):
+    """Return the shell hook block appropriate for the detected shell."""
+    if shell == "fish":
+        return (
+            RC_BEGIN + "\n"
+            + "if test -f %s\n" % ENV_FILE
+            + "    source %s\n" % ENV_FILE
+            + "end\n"
+            + RC_END + "\n"
+        )
+    # POSIX shells (bash, zsh)
+    return (
+        RC_BEGIN + "\n"
+        + "[ -f %s ] && source %s\n" % (ENV_FILE, ENV_FILE)
+        + RC_END + "\n"
+    )
 
 
 def setup_status():
     """Return installation/health state for the OpenRouter proxy setup."""
+    shell = _detect_shell()
+    rc_path = _shell_rc_path()
     return {
         "proxy_url": PROXY_URL,
         "ledger_file": LEDGER_FILE,
@@ -38,10 +77,11 @@ def setup_status():
         "launch_agent_file": LAUNCH_AGENT_FILE,
         "env_file_exists": os.path.isfile(ENV_FILE),
         "launch_agent_exists": os.path.isfile(LAUNCH_AGENT_FILE),
-        "zshrc_hooked": _shell_rc_has_hook(ZSH_RC),
+        "shell": shell or os.environ.get("SHELL", ""),
+        "shell_rc": rc_path,
+        "shell_rc_hooked": _shell_rc_has_hook(rc_path) if rc_path else False,
         "openrouter_base_url": os.environ.get("OPENROUTER_BASE_URL", ""),
         "openai_base_url": os.environ.get("OPENAI_BASE_URL", ""),
-        "shell": os.environ.get("SHELL", ""),
     }
 
 
@@ -50,7 +90,7 @@ def is_setup_complete():
     return (
         status["env_file_exists"]
         and status["launch_agent_exists"]
-        and status["zshrc_hooked"]
+        and status["shell_rc_hooked"]
     )
 
 
@@ -64,6 +104,12 @@ def maybe_auto_setup():
         return False, ""
     if not _is_interactive_tty():
         return False, ""
+    rc_path = _shell_rc_path()
+    if not rc_path:
+        return False, (
+            "Could not detect shell (SHELL=%s). "
+            "Run `burnctl setup openrouter` manually." % os.environ.get("SHELL", "")
+        )
     install()
     return True, (
         "Configured burnctl OpenRouter live tracking. "
@@ -74,9 +120,18 @@ def maybe_auto_setup():
 
 def install():
     """Install shell wiring plus a LaunchAgent for the OpenRouter proxy."""
+    rc_path = _shell_rc_path()
+    if not rc_path:
+        print(
+            "Warning: unsupported shell (SHELL=%s). "
+            "Skipping shell hook — set OPENROUTER_BASE_URL manually."
+            % os.environ.get("SHELL", ""),
+            file=sys.stderr,
+        )
     os.makedirs(CONFIG_DIR, mode=0o700, exist_ok=True)
     _write_env_file(ENV_FILE)
-    _ensure_shell_hook(ZSH_RC)
+    if rc_path:
+        _ensure_shell_hook(rc_path, _detect_shell())
     _write_launch_agent(LAUNCH_AGENT_FILE)
     _load_launch_agent(LAUNCH_AGENT_FILE)
 
@@ -107,6 +162,8 @@ def _is_interactive_tty():
 
 
 def _shell_rc_has_hook(path):
+    if not path:
+        return False
     try:
         with open(path, encoding="utf-8") as fh:
             return RC_BEGIN in fh.read()
@@ -120,7 +177,7 @@ def _write_env_file(path):
         fh.write(content)
 
 
-def _ensure_shell_hook(path):
+def _ensure_shell_hook(path, shell=""):
     existing = ""
     try:
         with open(path, encoding="utf-8") as fh:
@@ -129,10 +186,11 @@ def _ensure_shell_hook(path):
         existing = ""
     if RC_BEGIN in existing:
         return
+    os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "a", encoding="utf-8") as fh:
         if existing and not existing.endswith("\n"):
             fh.write("\n")
-        fh.write("\n" + RC_BLOCK)
+        fh.write("\n" + _rc_block(shell))
 
 
 def _write_launch_agent(path):
