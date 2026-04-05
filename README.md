@@ -15,7 +15,7 @@ Reads local session data and provider APIs. Spits out tokens, costs, model break
 | OpenRouter | OpenRouter activity API + local request ledger |
 | HuggingFace et al. | `~/.config/orchard/usage.jsonl` |
 | Ollama | Detection only, $0 |
-| Cline, OpenCode | Stubs — PRs welcome |
+| OpenCode | Stub — PRs welcome |
 
 ## Install
 
@@ -102,7 +102,7 @@ burnctl/
     ├── aider.py
     ├── api_usage.py      # OpenRouter, HuggingFace, etc.
     ├── local.py          # Ollama
-    └── stubs.py          # Cline, OpenCode
+    └── stubs.py          # OpenCode
 ```
 
 ## Requirements

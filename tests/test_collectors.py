@@ -11,7 +11,7 @@ from burnctl.collectors.aider import (
     AiderCollector, _expand_suffix, _COST_RE, _find_history_files,
 )
 from burnctl.collectors.local import LocalCollector
-from burnctl.collectors.stubs import ClineCollector, OpenCodeCollector
+from burnctl.collectors.stubs import OpenCodeCollector
 
 
 # ── Instantiation & interface ────────────────────────────────────
@@ -47,11 +47,11 @@ class TestAllCollectorsInterface:
 class TestStubCollectors:
     """Stubs should always be unavailable and return None stats."""
 
-    @pytest.mark.parametrize("cls", [ClineCollector, OpenCodeCollector])
+    @pytest.mark.parametrize("cls", [OpenCodeCollector])
     def test_is_available_returns_false(self, cls):
         assert cls().is_available() is False
 
-    @pytest.mark.parametrize("cls", [ClineCollector, OpenCodeCollector])
+    @pytest.mark.parametrize("cls", [OpenCodeCollector])
     def test_get_stats_returns_none(self, cls):
         now = datetime.now()
         assert cls().get_stats(now, now, now) is None

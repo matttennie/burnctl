@@ -77,7 +77,6 @@ class TestBuildParser:
             "--codex",
             "--aider",
             "--local",
-            "--cline",
             "--opencode",
             "--all",
         ],

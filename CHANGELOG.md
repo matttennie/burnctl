@@ -82,7 +82,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - OpenAI Codex CLI collector (parses `~/.codex/sessions/` JSONL)
 - Aider collector (parses `.aider.chat.history.md` cost lines)
 - Local/Ollama collector (detection stub, always $0)
-- Stub collectors for Cline, OpenCode (future support)
+- Stub collector for OpenCode (future support)
 - Multi-column terminal report with box drawing and ANSI colors
 - JSON, compact, accessible, and CSV export output formats
 - Persistent configuration at `~/.config/burnctl/config.json`

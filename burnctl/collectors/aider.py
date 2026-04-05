@@ -149,7 +149,7 @@ class AiderCollector(BaseCollector):
             "alltime_cost": alltime_cost,
             "model_usage": {},
             "first_session": "",
-            "total_messages": match_count,
+            "total_messages": alltime_matches,
             "total_sessions": 0,
             "tool_calls": 0,
         }
