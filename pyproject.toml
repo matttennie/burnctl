@@ -4,11 +4,11 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "burnctl"
-version = "0.3.0"
+version = "0.3.1"
 description = "Unified AI coding agent usage reporter"
 readme = "README.md"
 license = {text = "MIT"}
-authors = [{name = "Matthew Tennie", email = "theaiorchard@gmail.com"}]
+authors = [{name = "Matthew Tennie", email = "4433555+matttennie@users.noreply.github.com"}]
 requires-python = ">=3.8"
 dependencies = []
 
@@ -41,6 +41,12 @@ Changelog = "https://github.com/matttennie/burnctl/blob/main/CHANGELOG.md"
 
 [tool.setuptools.packages.find]
 include = ["burnctl*"]
+
+[tool.setuptools.package-data]
+burnctl = ["man/*.1"]
+
+[tool.setuptools.data-files]
+"share/man/man1" = ["burnctl/man/burnctl.1"]
 
 [project.scripts]
 burnctl = "burnctl.cli:main"

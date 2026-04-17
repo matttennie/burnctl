@@ -20,8 +20,22 @@ Reads local session data and provider APIs. Spits out tokens, costs, model break
 ## Install
 
 ```
-pip install burnctl
-pip install burnctl[claude]   # pulls claude-usage for tighter pricing
+pip install git+https://github.com/matttennie/burnctl.git
+```
+
+Local checkout:
+
+```bash
+git clone https://github.com/matttennie/burnctl.git
+cd burnctl
+python -m pip install -U .
+python -m pip install -U ".[claude]"   # pulls claude-usage for tighter pricing
+```
+
+Manual page:
+
+```bash
+man burnctl
 ```
 
 ## Usage

@@ -1,0 +1,147 @@
+.TH BURNCTL 1 "April 2026" "burnctl 0.3.1" "User Commands"
+.SH NAME
+burnctl \- unified AI coding agent usage dashboard
+.SH SYNOPSIS
+.B burnctl
+[\fIOPTIONS\fR] [\fIPROMPT\fR]
+.br
+.B burnctl
+[\fIOPTIONS\fR] \fICOMMAND\fR [\fIARGS\fR]
+.SH DESCRIPTION
+.B burnctl
+reads local session data and supported provider APIs to report usage, costs,
+model breakdowns, and billing-period summaries for AI coding tools such as
+Claude Code, Gemini CLI, Codex CLI, Aider, and OpenRouter.
+.SH TOP-LEVEL OPTIONS
+.TP
+.B \-v, \-\-version
+Show the installed burnctl version.
+.TP
+.B \-\-claude, \-\-gemini, \-\-codex, \-\-aider, \-\-openrouter, \-\-local, \-\-opencode
+Limit the report to the named agent.
+.TP
+.B \-\-all
+Include all detected agents.
+.TP
+.B \-j, \-\-json
+Emit machine-readable JSON.
+.TP
+.B \-c, \-\-compact
+Print a one-line summary.
+.TP
+.B \-\-full
+Disable compact mode for the current run.
+.TP
+.B \-s, \-\-simple
+Hide all-time VALUE and ROI output.
+.TP
+.B \-\-detailed
+Re-enable the all-time VALUE and ROI section.
+.TP
+.B \-\-color
+Force ANSI colors on.
+.TP
+.B \-n, \-\-no-color
+Force ANSI colors off.
+.TP
+.B \-t, \-\-theme \fITHEME\fR
+Set the output theme. Themes include
+.BR gradient ,
+.BR classic ,
+.BR colorblind ,
+and
+.BR accessible .
+.TP
+.B \-A, \-\-accessible
+Render screen-reader friendly plain text.
+.TP
+.B \-L, \-\-top-mode
+Enter a live auto-refreshing dashboard view.
+.TP
+.B \-p, \-\-plan \fIPLAN\fR
+Override the Claude plan for the current run.
+.TP
+.B \-i, \-\-interval \fIINTERVAL\fR
+Set billing interval for the current run. Common values:
+.BR mo ,
+.BR yr .
+.TP
+.B \-b, \-\-billing-day \fIDAY\fR
+Set the billing start day for the current run.
+.TP
+.B \-P, \-\-period \fIPERIOD\fR
+Choose which billing period to report:
+.BR current ,
+.BR last ,
+or
+.BR diff .
+.TP
+.B \-\-since \fIYYYY-MM-DD\fR
+Start date for a custom date range.
+.TP
+.B \-\-until \fIYYYY-MM-DD\fR
+End date for a custom date range.
+.TP
+.B \-e, \-\-export [\fIFILE\fR]
+Append report data to CSV. Defaults to
+.IR burnctl.csv .
+.SH COMMANDS
+.TP
+.B burnctl config
+View or set persisted configuration values.
+.br
+Examples:
+.RS
+.PP
+\fBburnctl config billing_day 17\fR
+.PP
+\fBburnctl config claude_plan pro\fR
+.PP
+\fBburnctl config claude_billing_day 10\fR
+.PP
+\fBburnctl config gemini_plan ai_pro\fR
+.PP
+\fBburnctl config gemini_billing_day 12\fR
+.PP
+\fBburnctl config codex_plan plus\fR
+.PP
+\fBburnctl config codex_billing_day 17\fR
+.PP
+\fBburnctl config billing_interval mo\fR
+.PP
+\fBburnctl config default_agents claude,gemini\fR
+.PP
+\fBburnctl config no_color true\fR
+.RE
+.TP
+.B burnctl upgrade
+Open provider billing or upgrade pages in the default browser.
+.TP
+.B burnctl setup openrouter
+Install or inspect one-time OpenRouter live-tracking integration.
+.TP
+.B burnctl proxy openrouter
+Run the local OpenRouter tracking proxy.
+.SH FILES
+.TP
+.I ~/.config/burnctl/config.json
+Persistent configuration.
+.TP
+.I ~/.local/share/burnctl/openrouter-usage.jsonl
+OpenRouter live request ledger.
+.SH EXAMPLES
+.PP
+\fBburnctl\fR
+.PP
+\fBburnctl --claude --gemini\fR
+.PP
+\fBburnctl -p max5x -b 15\fR
+.PP
+\fBburnctl -P last\fR
+.PP
+\fBburnctl -j\fR
+.PP
+\fBburnctl proxy openrouter --doctor\fR
+.SH SEE ALSO
+.BR python (1),
+.BR pip (1)

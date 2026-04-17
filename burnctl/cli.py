@@ -38,6 +38,9 @@ def _build_parser():
             "                    + cache_read_tokens * cache_read_rate\n"
             "                    + cache_create_tokens * cache_create_rate) / 1M\n"
             "  Value Ratio     = all-time API value / (plan_price * months_active)\n"
+            "\n"
+            "manual:\n"
+            "  man burnctl\n"
         ),
     )
     parser.add_argument(
