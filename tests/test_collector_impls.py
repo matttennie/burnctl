@@ -1442,6 +1442,12 @@ class TestCodexPlanInfo:
         info = CodexCollector().get_plan_info({"billing_day": 20})
         assert info["billing_day"] == 20
 
+    def test_agent_specific_billing_day(self):
+        info = CodexCollector().get_plan_info(
+            {"billing_day": 20, "codex_billing_day": 17}
+        )
+        assert info["billing_day"] == 17
+
 
 class TestCodexUpgradeUrl:
     def test_returns_url(self):

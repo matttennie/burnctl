@@ -457,7 +457,11 @@ class CodexCollector(BaseCollector):
         from burnctl.config import CODEX_PLAN_PRICES
         plan = config.get("codex_plan", "free")
         price = CODEX_PLAN_PRICES.get(plan, 0)
+        # Support the persisted flat config key used by `burnctl config`,
+        # while remaining compatible with the older nested override shape.
         agent_bd = config.get("codex_billing_day", 0)
+        if not agent_bd:
+            agent_bd = config.get("agent_billing_days", {}).get("codex")
         bd = agent_bd if agent_bd else config.get("billing_day", 1)
         return {
             "plan_name": plan,
