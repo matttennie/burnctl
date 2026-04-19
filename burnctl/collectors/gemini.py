@@ -10,7 +10,7 @@ import os
 from datetime import datetime
 
 from burnctl.collectors.base import BaseCollector, _check_file_size
-from burnctl.pricing import get_agent_pricing
+from burnctl.pricing import get_agent_pricing, get_model_pricing_for_time
 
 _GEMINI_DIR = os.path.join(os.path.expanduser("~"), ".gemini")
 _CHAT_PATTERN = os.path.join(_GEMINI_DIR, "tmp", "*", "chats", "session-*.json")
@@ -41,7 +41,7 @@ class GeminiCollector(BaseCollector):
     def is_available(self):
         return bool(glob.glob(_CHAT_PATTERN))
 
-    def get_stats(self, start, end, ref_date):
+    def get_stats(self, start, end, ref_date, live=False):
         session_files = glob.glob(_CHAT_PATTERN)
         if not session_files:
             return None
@@ -62,6 +62,7 @@ class GeminiCollector(BaseCollector):
         a_sessions = 0
         a_cost = 0.0
         first_session = None
+        last_session = None
 
         start_str = start.strftime("%Y-%m-%d")
         end_str = end.strftime("%Y-%m-%d")
@@ -72,6 +73,8 @@ class GeminiCollector(BaseCollector):
             try:
                 with open(fpath, encoding="utf-8", errors="replace") as f:
                     session = json.load(f)
+                if not isinstance(session, dict):
+                    continue
             except (json.JSONDecodeError, OSError):
                 continue
 
@@ -88,9 +91,11 @@ class GeminiCollector(BaseCollector):
 
             session_date = session_start.strftime("%Y-%m-%d")
 
-            # Track earliest session
+            # Track earliest/latest session
             if first_session is None or session_date < first_session:
                 first_session = session_date
+            if last_session is None or session_date > last_session:
+                last_session = session_date
 
             # Count all-time stats for this session
             sess_user_msgs = 0
@@ -104,7 +109,10 @@ class GeminiCollector(BaseCollector):
                 elif msg_type == "gemini":
                     tokens = msg.get("tokens", {})
                     model = msg.get("model", "unknown")
-                    model_price = pricing.get(model, default_price)
+                    msg_ts = _parse_iso(msg.get("timestamp", ""))
+                    model_price = get_model_pricing_for_time(
+                        "gemini", model, msg_ts or session_start,
+                    ) or pricing.get(model, default_price)
 
                     inp = tokens.get("input", 0)
                     out = tokens.get("output", 0)
@@ -119,7 +127,6 @@ class GeminiCollector(BaseCollector):
                     sess_cost += cost
 
                     # Check if this message is in period
-                    msg_ts = _parse_iso(msg.get("timestamp", ""))
                     msg_date = msg_ts.strftime("%Y-%m-%d") if msg_ts else session_date
 
                     if start_str <= msg_date < end_str:
@@ -165,6 +172,7 @@ class GeminiCollector(BaseCollector):
             "alltime_cost": a_cost,
             "model_usage": p_model_usage,
             "first_session": first_session or "",
+            "last_active": last_session or "",
             "total_messages": a_messages,
             "total_sessions": a_sessions,
             "tool_calls": p_tool_calls,
@@ -175,9 +183,13 @@ class GeminiCollector(BaseCollector):
 
     def get_plan_info(self, config):
         from burnctl.config import GEMINI_PLAN_PRICES
-        plan = config.get("gemini_plan", "free")
+        plan = config.get("agent_plans", {}).get("gemini")
+        if not plan:
+            plan = config.get("gemini_plan", "free")
         price = GEMINI_PLAN_PRICES.get(plan, 0)
-        agent_bd = config.get("gemini_billing_day", 0)
+        agent_bd = config.get("agent_billing_days", {}).get("gemini")
+        if not agent_bd:
+            agent_bd = config.get("gemini_billing_day", 0)
         bd = agent_bd if agent_bd else config.get("billing_day", 1)
         return {
             "plan_name": plan,

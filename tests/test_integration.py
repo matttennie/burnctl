@@ -18,7 +18,6 @@ import pytest
 from burnctl.collectors.claude import ClaudeCollector
 from burnctl.collectors.gemini import GeminiCollector
 from burnctl.collectors.codex import CodexCollector
-from burnctl.collectors.aider import AiderCollector
 from burnctl.collectors.api_usage import ApiUsageCollector
 from burnctl.report import (
     aggregate_stats,
@@ -495,89 +494,7 @@ class TestCodexIntegration:
         assert stats["sessions"] == 1
 
 
-# ── 4. Aider collector with realistic history file ───────────────────
-
-
-class TestAiderIntegration:
-    """Full pipeline test for the Aider collector."""
-
-    HISTORY_CONTENT = """\
-# aider chat started at 2026-03-11 14:00:00
-
-> /ask how do I fix this?
-
-Some response about fixing the issue.
-
-Tokens: 1.5k sent, 2.1k received. Cost: $0.03
-
-> /code fix it
-
-Applied changes to foo.py
-
-Tokens: 3.2k sent, 5.7k received. Cost: $0.12
-Tokens: 500 sent, 200 received. Cost: $0.01
-"""
-
-    def test_full_parse(self, tmp_path):
-        history_file = tmp_path / ".aider.chat.history.md"
-        history_file.write_text(self.HISTORY_CONTENT)
-
-        # Touch the file to ensure mtime is recent
-        now_ts = datetime.now().timestamp()
-        os.utime(str(history_file), (now_ts, now_ts))
-
-        start = datetime(2026, 3, 1)
-        end = datetime(2026, 4, 1)
-        ref_date = datetime(2026, 3, 13)
-
-        with patch(
-            "burnctl.collectors.aider._find_history_files",
-            return_value=[str(history_file)],
-        ):
-            collector = AiderCollector()
-            stats = collector.get_stats(start, end, ref_date)
-
-        assert stats is not None
-
-        # 3 cost lines = 3 messages
-        assert stats["messages"] == 3
-
-        # Output tokens: 2100 + 5700 + 200 = 8000
-        assert stats["output_tokens"] == 8000
-
-        # Period cost: 0.03 + 0.12 + 0.01 = 0.16
-        assert stats["period_cost"] == pytest.approx(0.16)
-
-        # Aider sets alltime_cost == period_cost
-        assert stats["alltime_cost"] == pytest.approx(0.16)
-
-    def test_old_file_skipped(self, tmp_path):
-        """Files with mtime before the period start are skipped."""
-        history_file = tmp_path / ".aider.chat.history.md"
-        history_file.write_text(self.HISTORY_CONTENT)
-
-        # Set mtime to well before the period
-        old_ts = datetime(2020, 1, 1).timestamp()
-        os.utime(str(history_file), (old_ts, old_ts))
-
-        start = datetime(2026, 3, 1)
-        end = datetime(2026, 4, 1)
-
-        with patch(
-            "burnctl.collectors.aider._find_history_files",
-            return_value=[str(history_file)],
-        ):
-            stats = AiderCollector().get_stats(
-                start, end, datetime(2026, 3, 13),
-            )
-
-        # File was too old for the period, but counted for all-time
-        assert stats is not None
-        assert stats["period_cost"] == 0.0
-        assert stats["alltime_cost"] > 0
-
-
-# ── 5. API usage collector with realistic usage.jsonl ───────────────────
+# ── 4. API usage collector with realistic usage.jsonl ───────────────────
 
 
 class TestApiUsageIntegration:
@@ -780,7 +697,7 @@ class _FakeCollector:
     def is_available(self):
         return True
 
-    def get_stats(self, start, end, ref_date):
+    def get_stats(self, start, end, ref_date, live=False):
         return self._stats
 
     def get_plan_info(self, config):
@@ -813,6 +730,7 @@ def _make_fake_stats(
             },
         },
         "first_session": "2026-01-01",
+        "last_active": "2026-01-01",
         "total_messages": 1000,
         "total_sessions": 50,
         "tool_calls": 200,

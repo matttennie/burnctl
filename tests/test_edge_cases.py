@@ -13,7 +13,6 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from burnctl.collectors.aider import AiderCollector
 from burnctl.collectors.base import MAX_FILE_SIZE, _check_file_size
 from burnctl.collectors.claude import ClaudeCollector
 from burnctl.collectors.codex import (
@@ -40,31 +39,6 @@ from burnctl.report import (
 
 class TestEncodingEdgeCases:
     """Files with unusual encodings should not crash collectors."""
-
-    def test_aider_non_utf8_bytes(self, tmp_path):
-        """Aider history with Latin-1 encoded bytes (errors='replace')."""
-        history = tmp_path / ".aider.chat.history.md"
-        # Write Latin-1 encoded content with a cost line
-        content = (
-            b"Some text with \xe9\xe8\xf1 accented chars\n"
-            b"Tokens: 1.5k sent, 2.1k received. Cost: $0.03\n"
-        )
-        history.write_bytes(content)
-
-        collector = AiderCollector()
-        start = datetime(2020, 1, 1)
-        end = datetime(2030, 1, 1)
-        ref = datetime(2026, 3, 13)
-
-        with patch(
-            "burnctl.collectors.aider._find_history_files",
-            return_value=[str(history)],
-        ):
-            stats = collector.get_stats(start, end, ref)
-
-        assert stats is not None
-        assert stats["messages"] == 1
-        assert stats["period_cost"] == pytest.approx(0.03)
 
     def test_gemini_session_with_bom(self, tmp_path):
         """Gemini session file with UTF-8 BOM should parse."""
@@ -132,22 +106,6 @@ class TestEncodingEdgeCases:
         result = _parse_session(str(fpath))
         assert result is not None
         assert len(result["user_messages"]) == 1
-
-    def test_empty_aider_history(self, tmp_path):
-        """Empty aider history file (0 bytes)."""
-        history = tmp_path / ".aider.chat.history.md"
-        history.write_text("")
-
-        collector = AiderCollector()
-        with patch(
-            "burnctl.collectors.aider._find_history_files",
-            return_value=[str(history)],
-        ):
-            stats = collector.get_stats(
-                datetime(2026, 1, 1), datetime(2026, 12, 31),
-                datetime(2026, 3, 13),
-            )
-        assert stats is None
 
     def test_empty_gemini_session_file(self, tmp_path):
         """Empty Gemini session file (0 bytes)."""
@@ -412,34 +370,6 @@ class TestConcurrentRaceConditions:
         # The open() will raise OSError, caught by the collector
         assert stats is None
 
-    def test_aider_file_disappears_between_mtime_and_read(self, tmp_path):
-        """Aider file vanishes between os.path.getmtime and open."""
-        history = tmp_path / ".aider.chat.history.md"
-        history.write_text("Tokens: 1k sent, 2k received. Cost: $0.10\n")
-
-        collector = AiderCollector()
-        start = datetime(2020, 1, 1)
-        end = datetime(2030, 1, 1)
-        ref = datetime(2026, 3, 13)
-
-        call_count = [0]
-        real_open = open
-
-        def disappearing_open(path, *args, **kwargs):
-            if str(history) in str(path):
-                call_count[0] += 1
-                raise OSError("File not found")
-            return real_open(path, *args, **kwargs)
-
-        with patch(
-            "burnctl.collectors.aider._find_history_files",
-            return_value=[str(history)],
-        ), patch("builtins.open", side_effect=disappearing_open):
-            stats = collector.get_stats(start, end, ref)
-
-        # Should return None gracefully, not crash
-        assert stats is None
-
 
 # =====================================================================
 # Path edge cases
@@ -600,6 +530,7 @@ class TestNumericEdgeCases:
                     "value_ratio": -0.5,
                     "model_usage": {},
                     "first_session": "",
+                    "last_active": "",
                     "total_messages": -5,
                     "total_sessions": -1,
                 },
@@ -652,6 +583,7 @@ class TestNumericEdgeCases:
                     "value_ratio": float("nan"),
                     "model_usage": {},
                     "first_session": "2026-01-01",
+                    "last_active": "2026-03-10",
                     "total_messages": 10,
                     "total_sessions": 1,
                     "input_tokens": None,
@@ -700,6 +632,7 @@ class TestNumericEdgeCases:
                     "value_ratio": 0.5,
                     "model_usage": {},
                     "first_session": "2026-01-01",
+                    "last_active": "2026-03-10",
                     "total_messages": 10,
                     "total_sessions": 1,
                     "input_tokens": None,
@@ -743,6 +676,7 @@ class TestNumericEdgeCases:
                     "value_ratio": float("inf"),
                     "model_usage": {},
                     "first_session": "2026-01-01",
+                    "last_active": "2026-03-10",
                     "total_messages": 10,
                     "total_sessions": 1,
                 },
@@ -999,35 +933,12 @@ class TestCollectorFileSizeIntegration:
         err = capsys.readouterr().err
         assert "oversized" in err
 
-    def test_aider_skips_oversized_history(self, tmp_path, capsys):
-        """AiderCollector.get_stats skips history files over the size limit."""
-        history = tmp_path / ".aider.chat.history.md"
-        # Create file over the limit with a valid cost line at the start
-        content = b"Tokens: 1k sent, 1k received. Cost: $0.05\n"
-        history.write_bytes(content + b"x" * MAX_FILE_SIZE)
-
-        collector = AiderCollector()
-        with patch(
-            "burnctl.collectors.aider._find_history_files",
-            return_value=[str(history)],
-        ):
-            stats = collector.get_stats(
-                datetime(2020, 1, 1), datetime(2030, 1, 1),
-                datetime(2026, 3, 15),
-            )
-
-        assert stats is None
-        err = capsys.readouterr().err
-        assert "oversized" in err
-
     def test_collectors_import_check_file_size(self):
         """All collectors that use file I/O import _check_file_size."""
         import burnctl.collectors.claude as claude_mod
         import burnctl.collectors.gemini as gemini_mod
         import burnctl.collectors.codex as codex_mod
-        import burnctl.collectors.aider as aider_mod
 
         assert hasattr(claude_mod, "_check_file_size")
         assert hasattr(gemini_mod, "_check_file_size")
         assert hasattr(codex_mod, "_check_file_size")
-        assert hasattr(aider_mod, "_check_file_size")

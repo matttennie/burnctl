@@ -1,8 +1,8 @@
 # burnctl
 
-Know what you're burning. One terminal, all your AI agents.
+Local AI usage and cost tracking for Claude Code, Gemini CLI, Codex CLI, OpenRouter, and related tools.
 
-Reads local session data and provider APIs. Spits out tokens, costs, model breakdowns, and ROI — no telemetry, no phoning home beyond what you already auth'd.
+Reads local session data plus provider APIs you already use, then shows tokens, costs, billing-period totals, model breakdowns, and ROI in one terminal view. No extra telemetry, no separate hosted service.
 
 ## Agents
 
@@ -11,7 +11,6 @@ Reads local session data and provider APIs. Spits out tokens, costs, model break
 | Claude Code | `~/.claude/stats-cache.json` |
 | Gemini CLI | `~/.gemini/` sessions |
 | Codex CLI | `~/.codex/sessions/*.jsonl` |
-| Aider | `.aider.chat.history.md` |
 | OpenRouter | OpenRouter activity API + local request ledger |
 | HuggingFace et al. | `~/.config/orchard/usage.jsonl` |
 | Ollama | Detection only, $0 |
@@ -81,12 +80,15 @@ Ledger: `~/.local/share/burnctl/openrouter-usage.jsonl`
 ```
 burnctl config                      # dump
 burnctl config billing_day 15
-burnctl config claude_plan max5x
-burnctl config codex_billing_day 29 # per-agent billing day (0 = global)
 burnctl config theme colorblind
+burnctl config --claude billing_plan max5x
+burnctl config --codex billing_plan plus billing_day 29
+burnctl config --openrouter billing_plan enterprise billing_day 10
 ```
 
-Keys: `billing_day`, `billing_interval`, `claude_plan`, `claude_billing_day`, `gemini_plan`, `gemini_billing_day`, `codex_plan`, `codex_billing_day`, `default_agents`, `theme`, `no_color`, `simple`, `compact`.
+Global keys: `billing_day`, `billing_interval`, `default_agents`, `theme`, `no_color`, `simple`, `compact`.
+
+Scoped agent keys via `--<agent>`: `billing_plan`, `billing_day`.
 
 ### Upgrade
 
@@ -113,7 +115,6 @@ burnctl/
     ├── claude.py
     ├── gemini.py
     ├── codex.py
-    ├── aider.py
     ├── api_usage.py      # OpenRouter, HuggingFace, etc.
     ├── local.py          # Ollama
     └── stubs.py          # OpenCode

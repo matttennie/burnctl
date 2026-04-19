@@ -31,7 +31,7 @@ class FakeCollector(BaseCollector):
     def is_available(self):
         return self._available
 
-    def get_stats(self, start, end, ref_date):
+    def get_stats(self, start, end, ref_date, live=False):
         return {
             "messages": 10,
             "sessions": 2,
@@ -41,6 +41,7 @@ class FakeCollector(BaseCollector):
             "model_usage": {},
             "input_tokens": 2500,
             "first_session": None,
+            "last_active": None,
             "total_messages": 100,
             "total_sessions": 20,
             "tool_calls": {},
@@ -75,7 +76,6 @@ class TestBuildParser:
             "--claude",
             "--gemini",
             "--codex",
-            "--aider",
             "--local",
             "--opencode",
             "--all",
@@ -156,22 +156,29 @@ class TestBuildParser:
         parser = self._get_parser()
         args = parser.parse_args(["config"])
         assert args.command == "config"
-        assert args.key is None
-        assert args.value is None
+        assert args.items == []
+        assert args.codex is False
 
     def test_config_subcommand_with_key(self):
         parser = self._get_parser()
         args = parser.parse_args(["config", "billing_day"])
         assert args.command == "config"
-        assert args.key == "billing_day"
-        assert args.value is None
+        assert args.items == ["billing_day"]
 
     def test_config_subcommand_with_key_value(self):
         parser = self._get_parser()
         args = parser.parse_args(["config", "billing_day", "15"])
         assert args.command == "config"
-        assert args.key == "billing_day"
-        assert args.value == "15"
+        assert args.items == ["billing_day", "15"]
+
+    def test_config_subcommand_with_scope_and_multiple_pairs(self):
+        parser = self._get_parser()
+        args = parser.parse_args(
+            ["config", "--codex", "billing_plan", "pro", "billing_day", "18"]
+        )
+        assert args.command == "config"
+        assert args.codex is True
+        assert args.items == ["billing_plan", "pro", "billing_day", "18"]
 
     def test_upgrade_subcommand(self):
         parser = self._get_parser()
@@ -527,7 +534,17 @@ class TestHandleConfig:
     def test_show_all_no_key(self):
         from burnctl.cli import _handle_config
 
-        args = argparse.Namespace(key=None, value=None)
+        args = argparse.Namespace(
+            items=[],
+            claude=False,
+            gemini=False,
+            codex=False,
+            openrouter=False,
+            elevenlabs=False,
+            inworld=False,
+            local=False,
+            opencode=False,
+        )
         with patch("burnctl.config.show") as mock_show:
             _handle_config(args)
         mock_show.assert_called_once()
@@ -535,7 +552,17 @@ class TestHandleConfig:
     def test_show_single_key(self, capsys):
         from burnctl.cli import _handle_config
 
-        args = argparse.Namespace(key="billing_day", value=None)
+        args = argparse.Namespace(
+            items=["billing_day"],
+            claude=False,
+            gemini=False,
+            codex=False,
+            openrouter=False,
+            elevenlabs=False,
+            inworld=False,
+            local=False,
+            opencode=False,
+        )
         fake_cfg = {"billing_day": 15, "claude_plan": "pro"}
         with patch("burnctl.config.load", return_value=fake_cfg):
             _handle_config(args)
@@ -545,7 +572,17 @@ class TestHandleConfig:
     def test_show_unknown_key_exits(self):
         from burnctl.cli import _handle_config
 
-        args = argparse.Namespace(key="nonexistent_key", value=None)
+        args = argparse.Namespace(
+            items=["nonexistent_key"],
+            claude=False,
+            gemini=False,
+            codex=False,
+            openrouter=False,
+            elevenlabs=False,
+            inworld=False,
+            local=False,
+            opencode=False,
+        )
         fake_cfg = {"billing_day": 15}
         with patch("burnctl.config.load", return_value=fake_cfg):
             with pytest.raises(SystemExit) as exc_info:
@@ -555,7 +592,17 @@ class TestHandleConfig:
     def test_show_unknown_key_error_message(self, capsys):
         from burnctl.cli import _handle_config
 
-        args = argparse.Namespace(key="nonexistent_key", value=None)
+        args = argparse.Namespace(
+            items=["nonexistent_key"],
+            claude=False,
+            gemini=False,
+            codex=False,
+            openrouter=False,
+            elevenlabs=False,
+            inworld=False,
+            local=False,
+            opencode=False,
+        )
         fake_cfg = {"billing_day": 15}
         with patch("burnctl.config.load", return_value=fake_cfg):
             with pytest.raises(SystemExit):
@@ -564,13 +611,44 @@ class TestHandleConfig:
         assert "Unknown key" in err
         assert "nonexistent_key" in err
 
-    def test_set_value(self):
+    def test_set_global_pairs(self):
         from burnctl.cli import _handle_config
 
-        args = argparse.Namespace(key="billing_day", value="15")
-        with patch("burnctl.config.set_value") as mock_set:
+        args = argparse.Namespace(
+            items=["billing_day", "15", "theme", "classic"],
+            claude=False,
+            gemini=False,
+            codex=False,
+            openrouter=False,
+            elevenlabs=False,
+            inworld=False,
+            local=False,
+            opencode=False,
+        )
+        with patch("burnctl.config.set_values") as mock_set:
             _handle_config(args)
-        mock_set.assert_called_once_with("billing_day", "15")
+        mock_set.assert_called_once_with([("billing_day", "15"), ("theme", "classic")])
+
+    def test_set_scoped_pairs(self):
+        from burnctl.cli import _handle_config
+
+        args = argparse.Namespace(
+            items=["billing_plan", "pro", "billing_day", "18"],
+            claude=False,
+            gemini=False,
+            codex=True,
+            openrouter=False,
+            elevenlabs=False,
+            inworld=False,
+            local=False,
+            opencode=False,
+        )
+        with patch("burnctl.config.set_scoped_values") as mock_set:
+            _handle_config(args)
+        mock_set.assert_called_once_with(
+            "codex",
+            [("billing_plan", "pro"), ("billing_day", "18")],
+        )
 
 
 # ── _handle_upgrade ──────────────────────────────────────────────────

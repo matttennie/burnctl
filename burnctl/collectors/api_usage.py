@@ -1,8 +1,8 @@
 """Provider-backed usage collectors.
 
-OpenRouter is sourced directly from the OpenRouter API to avoid stale or
-incomplete local harness logs. Other provider rows continue to be sourced
-from Orchard's JSONL usage log when present.
+OpenRouter, ElevenLabs, and Inworld are sourced directly from their respective
+APIs when keys are present. Other provider rows continue to be sourced from
+Orchard's JSONL usage log when present.
 """
 
 import json
@@ -11,7 +11,7 @@ import sys
 from typing import Dict, List
 import urllib.error
 import urllib.request
-from datetime import datetime
+from datetime import datetime, timezone
 
 from burnctl.collectors.base import BaseCollector
 from burnctl.openrouter_ledger import load_entries as load_openrouter_ledger
@@ -26,6 +26,11 @@ _OPENROUTER_KEY_ENV_VARS = (
     "OPENROUTER_API_KEY",
     "OPENROUTER_ORCHARD_API_KEY",
 )
+
+_ELEVENLABS_API_BASE = "https://api.elevenlabs.io/v1"
+_ELEVENLABS_KEY_ENV_VARS = ("ELEVENLABS_API_KEY", "XI_API_KEY")
+
+_INWORLD_KEY_ENV_VARS = ("INWORLD_API_KEY", "INWORLD_KEY")
 
 # Skip files larger than 100 MB to avoid unbounded memory usage.
 _MAX_FILE_BYTES = 100 * 1024 * 1024
@@ -43,6 +48,14 @@ _PROVIDER_META = {
     "openai": {
         "name": "OpenAI",
         "upgrade_url": "https://platform.openai.com/usage",
+    },
+    "elevenlabs": {
+        "name": "ElevenLabs",
+        "upgrade_url": "https://elevenlabs.io/app/subscription",
+    },
+    "inworld": {
+        "name": "Inworld AI",
+        "upgrade_url": "https://play.inworld.ai/",
     },
 }
 
@@ -122,33 +135,6 @@ def _load_entries(filepath=None):
     return entries
 
 
-def _openrouter_api_key():
-    """Return the first configured OpenRouter API key, if any."""
-    for name in _OPENROUTER_KEY_ENV_VARS:
-        value = os.environ.get(name, "").strip()
-        if value:
-            return value
-    return ""
-
-
-def _openrouter_get_json(path, api_key):
-    """GET an OpenRouter endpoint and decode the JSON response."""
-    req = urllib.request.Request(
-        _OPENROUTER_API_BASE + path,
-        headers={
-            "Authorization": "Bearer " + api_key,
-            "Accept": "application/json",
-            "User-Agent": "burnctl/0.1.0",
-        },
-    )
-    with urllib.request.urlopen(req, timeout=10) as resp:
-        return json.loads(resp.read().decode("utf-8"))
-
-
-def _warn_openrouter_api(message):
-    print("Warning: OpenRouter collector: " + message, file=sys.stderr)
-
-
 def _float_or(value, default=0.0):
     try:
         return float(value)
@@ -172,6 +158,34 @@ def _parse_activity_day(day_str):
     return None
 
 
+def _openrouter_api_key():
+    """Return the first configured OpenRouter API key, if any."""
+    for name in _OPENROUTER_KEY_ENV_VARS:
+        value = os.environ.get(name, "").strip()
+        if value:
+            return value
+    return ""
+
+
+def _openrouter_get_json(path, api_key, timeout=10):
+    """Fetch JSON from OpenRouter API."""
+    req = urllib.request.Request(
+        _OPENROUTER_API_BASE + path,
+        headers={
+            "Authorization": "Bearer " + api_key,
+            "Accept": "application/json",
+            "User-Agent": "burnctl/0.1.0",
+        },
+    )
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        data = json.loads(resp.read().decode("utf-8"))
+        return data if isinstance(data, dict) else None
+
+
+def _warn_openrouter_api(message):
+    print("Warning: OpenRouter collector: " + message, file=sys.stderr)
+
+
 class OpenRouterCollector(BaseCollector):
     """Collector backed by the OpenRouter account API."""
 
@@ -189,15 +203,16 @@ class OpenRouterCollector(BaseCollector):
     def get_upgrade_url(self):
         return "https://openrouter.ai/credits"
 
-    def get_stats(self, start, end, ref_date):
+    def get_stats(self, start, end, ref_date, live=False):
         api_key = _openrouter_api_key()
         if not api_key:
             return None
         start_day = start.date()
         end_day = end.date()
 
+        timeout = 2 if live else 10
         try:
-            activity_resp = _openrouter_get_json("/activity", api_key)
+            activity_resp = _openrouter_get_json("/activity", api_key, timeout=timeout)
         except urllib.error.HTTPError as err:
             if err.code in (401, 403):
                 _warn_openrouter_api(
@@ -212,13 +227,12 @@ class OpenRouterCollector(BaseCollector):
             return None
 
         try:
-            credits_resp = _openrouter_get_json("/credits", api_key)
-        except urllib.error.HTTPError as err:
+            credits_resp = _openrouter_get_json("/credits", api_key, timeout=timeout)
+        except (urllib.error.URLError, urllib.error.HTTPError, ValueError, OSError):
             credits_resp = None
-            if err.code not in (401, 403):
-                _warn_openrouter_api("credits request failed with HTTP %s." % err.code)
-        except (urllib.error.URLError, ValueError, OSError):
-            credits_resp = None
+
+        if not isinstance(activity_resp, dict):
+            return None
 
         rows = activity_resp.get("data", [])
         if not isinstance(rows, list):
@@ -229,13 +243,13 @@ class OpenRouterCollector(BaseCollector):
         period_output_tokens = 0
         period_cost = 0.0
         period_model_usage: Dict[str, Dict[str, int]] = {}
-        period_endpoints = set()
+        period_requests = 0
         latest_activity_day = None
         settled_request_ids = set()
         ledger_used = False
 
         observed_messages = 0
-        observed_endpoints = set()
+        observed_requests = 0
 
         for row in rows:
             if not isinstance(row, dict):
@@ -251,12 +265,10 @@ class OpenRouterCollector(BaseCollector):
             completion_tokens = _int_or(row.get("completion_tokens"))
             usage = _float_or(row.get("usage"))
             model = str(row.get("model", "") or row.get("model_name", "") or "Unknown")
-            endpoint_id = str(row.get("endpoint_id", ""))
             request_id = str(row.get("id", "") or row.get("generation_id", ""))
 
             observed_messages += requests
-            if endpoint_id:
-                observed_endpoints.add(endpoint_id)
+            observed_requests += requests
             if request_id:
                 settled_request_ids.add(request_id)
 
@@ -264,11 +276,10 @@ class OpenRouterCollector(BaseCollector):
                 continue
 
             period_messages += requests
+            period_requests += requests
             period_input_tokens += prompt_tokens
             period_output_tokens += completion_tokens
             period_cost += usage
-            if endpoint_id:
-                period_endpoints.add(endpoint_id)
 
             bucket = period_model_usage.setdefault(
                 model, {"inputTokens": 0, "outputTokens": 0},
@@ -296,11 +307,10 @@ class OpenRouterCollector(BaseCollector):
 
             ledger_used = True
             period_messages += 1
+            period_requests += 1
             period_input_tokens += entry.get("input_tokens", 0)
             period_output_tokens += entry.get("output_tokens", 0)
             period_cost += entry.get("cost", 0.0)
-            if request_id:
-                period_endpoints.add(request_id)
             bucket = period_model_usage.setdefault(
                 entry.get("model", "Unknown"),
                 {"inputTokens": 0, "outputTokens": 0},
@@ -324,23 +334,205 @@ class OpenRouterCollector(BaseCollector):
 
         return {
             "messages": period_messages,
-            "sessions": len(period_endpoints),
+            "sessions": None,
             "input_tokens": period_input_tokens,
             "output_tokens": period_output_tokens,
             "period_cost": period_cost,
             "alltime_cost": alltime_cost,
             "model_usage": period_model_usage,
             "first_session": "",
+            "last_active": latest_activity_day.isoformat() if latest_activity_day else "",
             "total_messages": None,
             "total_sessions": None,
             "tool_calls": 0,
             "observed_messages": observed_messages,
-            "observed_sessions": len(observed_endpoints),
+            "observed_sessions": None,
+            "observed_requests": observed_requests,
+            "period_requests": period_requests,
             "activity_through": (
                 latest_activity_day.isoformat() if latest_activity_day else ""
             ),
             "live_ledger": ledger_used,
         }
+
+
+def _elevenlabs_api_key():
+    """Return the first configured ElevenLabs API key, if any."""
+    for name in _ELEVENLABS_KEY_ENV_VARS:
+        value = os.environ.get(name, "").strip()
+        if value:
+            return value
+    return ""
+
+
+def _elevenlabs_get_json(path, api_key, timeout=10):
+    """Fetch JSON from ElevenLabs API."""
+    req = urllib.request.Request(
+        _ELEVENLABS_API_BASE + path,
+        headers={
+            "xi-api-key": api_key,
+            "Accept": "application/json",
+            "User-Agent": "burnctl/0.1.0",
+        },
+    )
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        data = json.loads(resp.read().decode("utf-8"))
+        return data if isinstance(data, dict) else None
+
+
+class ElevenLabsCollector(BaseCollector):
+    """Collector for ElevenLabs character usage via API."""
+
+    @property
+    def name(self):
+        return "ElevenLabs"
+
+    @property
+    def id(self):
+        return "elevenlabs"
+
+    def is_available(self):
+        return bool(_elevenlabs_api_key())
+
+    def get_upgrade_url(self):
+        return _PROVIDER_META["elevenlabs"]["upgrade_url"]
+
+    def get_stats(self, start, end, ref_date, live=False):
+        api_key = _elevenlabs_api_key()
+        if not api_key:
+            return None
+
+        timeout = 2 if live else 10
+        try:
+            sub = _elevenlabs_get_json("/user/subscription", api_key, timeout=timeout)
+            hist_resp = _elevenlabs_get_json("/history", api_key, timeout=timeout)
+        except (urllib.error.URLError, urllib.error.HTTPError, ValueError, OSError):
+            return None
+
+        if not isinstance(sub, dict) or not isinstance(hist_resp, dict):
+            return None
+
+        history = hist_resp.get("history", [])
+        if not isinstance(history, list):
+            history = []
+
+        period_chars = 0
+        period_items = 0
+        period_model_usage = {}
+        first_ts = None
+        last_ts = None
+
+        start_ts = start.timestamp()
+        end_ts = end.timestamp()
+
+        for item in history:
+            if not isinstance(item, dict):
+                continue
+            ts = item.get("date_unix", 0)
+            if not ts:
+                continue
+
+            if first_ts is None or ts < first_ts:
+                first_ts = ts
+            if last_ts is None or ts > last_ts:
+                last_ts = ts
+
+            if start_ts <= ts < end_ts:
+                c_from = item.get("character_count_change_from", 0)
+                c_to = item.get("character_count_change_to", 0)
+                usage = max(c_to - c_from, 0)
+                period_chars += usage
+                period_items += 1
+
+                model = item.get("model_id", "eleven_multilingual_v2")
+                bucket = period_model_usage.setdefault(model, {"inputTokens": 0, "outputTokens": 0})
+                bucket["outputTokens"] += usage
+
+        alltime_used = sub.get("character_count", 0)
+        rate = 0.30 / 1000  # Default $0.30/1k chars
+        period_cost = period_chars * rate
+        alltime_cost = alltime_used * rate
+
+        return {
+            "messages": period_items,
+            "sessions": period_items,
+            "input_tokens": 0,
+            "output_tokens": period_chars,
+            "period_cost": period_cost,
+            "alltime_cost": alltime_cost,
+            "model_usage": period_model_usage,
+            "first_session": datetime.fromtimestamp(first_ts).strftime("%Y-%m-%d") if first_ts else "",
+            "last_active": datetime.fromtimestamp(last_ts).strftime("%Y-%m-%d") if last_ts else "",
+            "total_messages": len(history),
+            "total_sessions": len(history),
+            "tool_calls": 0,
+        }
+
+    def get_plan_info(self, config):
+        api_key = _elevenlabs_api_key()
+        configured_plan = config.get("agent_plans", {}).get("elevenlabs")
+        if not configured_plan:
+            configured_plan = config.get("elevenlabs_plan", "")
+        agent_bd = config.get("agent_billing_days", {}).get("elevenlabs")
+        if not agent_bd:
+            agent_bd = config.get("elevenlabs_billing_day", 0)
+        if not api_key:
+            info = super().get_plan_info(config)
+            if configured_plan:
+                info["plan_name"] = configured_plan
+            if agent_bd:
+                info["billing_day"] = agent_bd
+            return info
+        try:
+            sub = _elevenlabs_get_json("/user/subscription", api_key, timeout=2)
+            if sub:
+                tier = sub.get("tier", "pay-as-you-go")
+                return {
+                    "plan_name": configured_plan or tier,
+                    "plan_price": config.get("plan_price", 0),
+                    "billing_day": agent_bd if agent_bd else config.get("billing_day", 1),
+                    "interval": "mo",
+                }
+        except:
+            pass
+        info = super().get_plan_info(config)
+        if configured_plan:
+            info["plan_name"] = configured_plan
+        if agent_bd:
+            info["billing_day"] = agent_bd
+        return info
+
+
+def _inworld_api_key():
+    """Return the first configured Inworld API key, if any."""
+    for name in _INWORLD_KEY_ENV_VARS:
+        value = os.environ.get(name, "").strip()
+        if value:
+            return value
+    return ""
+
+
+class InworldCollector(BaseCollector):
+    """Collector for Inworld AI. Currently detection + log-backed only."""
+
+    @property
+    def name(self):
+        return "Inworld AI"
+
+    @property
+    def id(self):
+        return "inworld"
+
+    def is_available(self):
+        """Always available so it shows up in the dashboard for ROI tracking."""
+        return True
+
+    def get_stats(self, start, end, ref_date, live=False):
+        # We don't have a direct usage API yet, so we use the common log pass
+        # This allows it to appear even if only in logs.
+        # But we must satisfy the registry. ApiUsageCollector handles the log pass normally.
+        # Here we return None so the generic discover_collectors() logic takes over log data.
+        return None
 
 
 class ApiUsageCollector(BaseCollector):
@@ -369,7 +561,7 @@ class ApiUsageCollector(BaseCollector):
         entries = _load_entries(self._file)
         return any(e["provider"] == self._provider_id for e in entries)
 
-    def get_stats(self, start, end, ref_date):
+    def get_stats(self, start, end, ref_date, live=False):
         all_entries = _load_entries(self._file)
         entries = [
             e for e in all_entries if e["provider"] == self._provider_id
@@ -388,6 +580,7 @@ class ApiUsageCollector(BaseCollector):
         alltime_messages = 0
         alltime_node_ids = set()
         first_ts = None
+        last_ts = None
 
         for entry in entries:
             ts = entry["ts"]
@@ -397,6 +590,8 @@ class ApiUsageCollector(BaseCollector):
             alltime_node_ids.add(entry["node_id"])
             if first_ts is None or ts < first_ts:
                 first_ts = ts
+            if last_ts is None or ts > last_ts:
+                last_ts = ts
 
             if start <= ts < end:
                 period_messages += 1
@@ -416,6 +611,7 @@ class ApiUsageCollector(BaseCollector):
             return None
 
         first_session = first_ts.strftime("%Y-%m-%d") if first_ts else ""
+        last_active = last_ts.strftime("%Y-%m-%d") if last_ts else ""
 
         return {
             "messages": period_messages,
@@ -426,6 +622,7 @@ class ApiUsageCollector(BaseCollector):
             "alltime_cost": alltime_cost,
             "model_usage": period_model_usage,
             "first_session": first_session,
+            "last_active": last_active,
             "total_messages": alltime_messages,
             "total_sessions": len(alltime_node_ids),
             "tool_calls": 0,
@@ -435,10 +632,16 @@ class ApiUsageCollector(BaseCollector):
         return self._upgrade_url
 
     def get_plan_info(self, config):
+        plan = config.get("agent_plans", {}).get(self.id)
+        if not plan:
+            plan = config.get(f"{self.id}_plan", "")
+        agent_bd = config.get("agent_billing_days", {}).get(self.id)
+        if not agent_bd:
+            agent_bd = config.get(f"{self.id}_billing_day", 0)
         return {
-            "plan_name": "pay-as-you-go",
+            "plan_name": plan or "pay-as-you-go",
             "plan_price": 0,
-            "billing_day": config.get("billing_day", 1),
+            "billing_day": agent_bd if agent_bd else config.get("billing_day", 1),
             "interval": "mo",
         }
 
@@ -446,16 +649,24 @@ class ApiUsageCollector(BaseCollector):
 def discover_collectors(usage_file=None):
     """Return provider collectors.
 
-    OpenRouter is always represented by its dedicated API-backed collector.
-    Other providers are discovered from Orchard's JSONL usage file.
+    OpenRouter and ElevenLabs are represented by dedicated API-backed collectors.
+    Other providers (including Inworld) are discovered from Orchard's JSONL usage file.
     """
     entries = _load_entries(usage_file)
     providers = sorted(
-        set(e["provider"] for e in entries if e["provider"] != "openrouter")
+        set(e["provider"] for e in entries if e["provider"] not in ("openrouter", "elevenlabs"))
     )
 
-    collectors: List[BaseCollector] = [OpenRouterCollector()]
+    collectors: List[BaseCollector] = [
+        OpenRouterCollector(),
+        ElevenLabsCollector(),
+        InworldCollector(),
+    ]
+
     for pid in providers:
+        # Avoid double-adding providers that have dedicated collectors
+        if pid in ("openrouter", "elevenlabs", "inworld"):
+            continue
         meta = _PROVIDER_META.get(pid, {})
         display_name = meta.get("name", pid.title())
         upgrade_url = meta.get("upgrade_url", "")

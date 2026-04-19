@@ -1,4 +1,4 @@
-.TH BURNCTL 1 "April 2026" "burnctl 0.3.1" "User Commands"
+.TH BURNCTL 1 "April 2026" "burnctl 0.4.0" "User Commands"
 .SH NAME
 burnctl \- unified AI coding agent usage dashboard
 .SH SYNOPSIS
@@ -11,13 +11,13 @@ burnctl \- unified AI coding agent usage dashboard
 .B burnctl
 reads local session data and supported provider APIs to report usage, costs,
 model breakdowns, and billing-period summaries for AI coding tools such as
-Claude Code, Gemini CLI, Codex CLI, Aider, and OpenRouter.
+Claude Code, Gemini CLI, Codex CLI, and OpenRouter.
 .SH TOP-LEVEL OPTIONS
 .TP
 .B \-v, \-\-version
 Show the installed burnctl version.
 .TP
-.B \-\-claude, \-\-gemini, \-\-codex, \-\-aider, \-\-openrouter, \-\-local, \-\-opencode
+.B \-\-claude, \-\-gemini, \-\-codex, \-\-openrouter, \-\-local, \-\-opencode
 Limit the report to the named agent.
 .TP
 .B \-\-all
@@ -95,19 +95,15 @@ Examples:
 .PP
 \fBburnctl config billing_day 17\fR
 .PP
-\fBburnctl config claude_plan pro\fR
-.PP
-\fBburnctl config claude_billing_day 10\fR
-.PP
-\fBburnctl config gemini_plan ai_pro\fR
-.PP
-\fBburnctl config gemini_billing_day 12\fR
-.PP
-\fBburnctl config codex_plan plus\fR
-.PP
-\fBburnctl config codex_billing_day 17\fR
-.PP
 \fBburnctl config billing_interval mo\fR
+.PP
+\fBburnctl config --claude billing_plan pro\fR
+.PP
+\fBburnctl config --gemini billing_plan ai_pro\fR
+.PP
+\fBburnctl config --codex billing_plan plus billing_day 17\fR
+.PP
+\fBburnctl config --openrouter billing_plan enterprise billing_day 10\fR
 .PP
 \fBburnctl config default_agents claude,gemini\fR
 .PP

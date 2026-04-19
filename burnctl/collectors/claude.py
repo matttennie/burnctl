@@ -242,7 +242,7 @@ class ClaudeCollector(BaseCollector):
 
     # ── Stats computation ────────────────────────────────────────
 
-    def get_stats(self, start, end, ref_date):
+    def get_stats(self, start, end, ref_date, live=False):
         """Collect Claude Code stats for the billing period [start, end)."""
         data = self._load_data()
         if data is None:
@@ -278,8 +278,9 @@ class ClaudeCollector(BaseCollector):
                 )
                 bucket["outputTokens"] += out_tokens
 
-        # Compute period cost using effective per-output-token rate that
-        # accounts for input + cache costs (derived from all-time ratios).
+        # Claude's stats cache does not expose period-scoped input and cache
+        # token totals. This period cost is therefore an estimate derived from
+        # the all-time model mix and is labeled as such by the report layer.
         alltime_model_usage = data.get("modelUsage", {})
         period_cost = 0.0
         for model, bucket in period_model_usage.items():
@@ -304,30 +305,26 @@ class ClaudeCollector(BaseCollector):
 
         first_session = data.get("firstSessionDate", "")[:10]
 
-        # Estimate period input tokens from all-time input/output ratio
-        period_input_tokens = 0
-        for model, bucket in period_model_usage.items():
-            out_tok = bucket["outputTokens"]
-            at_usage = alltime_model_usage.get(model)
-            if at_usage and at_usage.get("outputTokens", 0) > 0:
-                at_in = at_usage.get("inputTokens", 0)
-                at_out = at_usage["outputTokens"]
-                est_in = int(out_tok * at_in / at_out)
-                bucket["inputTokens"] = est_in
-                period_input_tokens += est_in
+        all_daily = data.get("dailyActivity", [])
+        last_active = max(d.get("date", "") for d in all_daily) if all_daily else ""
+
+        if data.get("totalMessages", 0) == 0:
+            return None
 
         return {
             "messages": period_messages,
             "sessions": period_sessions,
-            "input_tokens": period_input_tokens if period_model_usage else None,
+            "input_tokens": None,
             "output_tokens": period_output_tokens,
             "period_cost": period_cost,
             "alltime_cost": alltime_cost,
             "model_usage": period_model_usage,
             "first_session": first_session,
+            "last_active": last_active,
             "total_messages": data.get("totalMessages", 0),
             "total_sessions": data.get("totalSessions", 0),
             "tool_calls": period_tools,
+            "period_cost_estimated": bool(period_model_usage),
         }
 
     # ── Plan / billing helpers ───────────────────────────────────
@@ -346,7 +343,9 @@ class ClaudeCollector(BaseCollector):
         if from_env:
             plan = env_plan
         else:
-            plan = config.get("claude_plan", "free")
+            plan = config.get("agent_plans", {}).get("claude")
+            if not plan:
+                plan = config.get("claude_plan", "free")
 
         # Warn if using the default and the user never set it
         if plan == "free" and not from_env:
@@ -360,13 +359,16 @@ class ClaudeCollector(BaseCollector):
                 else:
                     with open(cfg_file, encoding="utf-8") as f:
                         saved = json.load(f)
-                    explicitly_set = "claude_plan" in saved
+                    explicitly_set = (
+                        "claude_plan" in saved
+                        or bool(saved.get("agent_plans", {}).get("claude"))
+                    )
             except (OSError, json.JSONDecodeError, TypeError):
                 pass
             if not explicitly_set:
                 print(
                     "Warning: Claude plan not configured (defaulting to 'free'). "
-                    "Set your plan: burnctl config claude_plan <plan>",
+                    "Set your plan: burnctl config --claude billing_plan <plan>",
                     file=sys.stderr,
                 )
 
@@ -377,7 +379,9 @@ class ClaudeCollector(BaseCollector):
         else:
             price = PLAN_PRICES.get(plan, 0)
 
-        agent_bd = config.get("claude_billing_day", 0)
+        agent_bd = config.get("agent_billing_days", {}).get("claude")
+        if not agent_bd:
+            agent_bd = config.get("claude_billing_day", 0)
         bd = agent_bd if agent_bd else config.get("billing_day", 1)
 
         return {

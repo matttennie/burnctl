@@ -53,7 +53,7 @@ class BaseCollector(ABC):
         """Return *True* if this agent's usage data exists on the system."""
 
     @abstractmethod
-    def get_stats(self, start, end, ref_date):
+    def get_stats(self, start, end, ref_date, live=False):
         """Collect usage stats for the billing period [*start*, *end*).
 
         Parameters
@@ -64,6 +64,9 @@ class BaseCollector(ABC):
             Exclusive end of the billing period.
         ref_date : datetime.datetime
             "Today" reference used for elapsed-day calculations.
+        live : bool
+            True if running in a high-frequency "live" loop. Collectors
+            may use this to reduce timeouts or skip expensive scans.
 
         Returns
         -------
@@ -73,7 +76,8 @@ class BaseCollector(ABC):
             - ``messages``, ``sessions``, ``output_tokens``
             - ``period_cost``, ``alltime_cost``
             - ``model_usage``, ``daily_messages``
-            - ``first_session``, ``total_messages``, ``total_sessions``
+            - ``first_session``, ``last_active``
+            - ``total_messages``, ``total_sessions``
             - ``tool_calls``
 
             *None* when there is no data for the requested period.
@@ -91,9 +95,15 @@ class BaseCollector(ABC):
         dict
             Keys: ``plan_name``, ``plan_price``, ``billing_day``, ``interval``.
         """
+        agent_plan = config.get("agent_plans", {}).get(self.id)
+        if not agent_plan:
+            agent_plan = config.get(f"{self.id}_plan", "")
+        agent_bd = config.get("agent_billing_days", {}).get(self.id)
+        if not agent_bd:
+            agent_bd = config.get(f"{self.id}_billing_day", 0)
         return {
-            "plan_name": "pay-as-you-go",
+            "plan_name": agent_plan or "pay-as-you-go",
             "plan_price": 0,
-            "billing_day": config.get("billing_day", 1),
+            "billing_day": agent_bd if agent_bd else config.get("billing_day", 1),
             "interval": "mo",
         }

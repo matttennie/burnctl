@@ -27,7 +27,7 @@ class LocalCollector(BaseCollector):
         """Return *True* if the ``~/.ollama`` directory exists."""
         return os.path.isdir(_OLLAMA_DIR)
 
-    def get_stats(self, start, end, ref_date):
+    def get_stats(self, start, end, ref_date, live=False):
         """Return zeroed stats — local models have no metered usage."""
         return {
             "messages": 0,
@@ -38,6 +38,7 @@ class LocalCollector(BaseCollector):
             "alltime_cost": 0.0,
             "model_usage": {},
             "first_session": "",
+            "last_active": "",
             "total_messages": 0,
             "total_sessions": 0,
             "tool_calls": 0,
@@ -47,9 +48,11 @@ class LocalCollector(BaseCollector):
         return "https://ollama.com/"
 
     def get_plan_info(self, config):
+        plan = config.get("agent_plans", {}).get("local") or "local"
+        agent_bd = config.get("agent_billing_days", {}).get("local", 0)
         return {
-            "plan_name": "local",
+            "plan_name": plan,
             "plan_price": 0,
-            "billing_day": config.get("billing_day", 1),
+            "billing_day": agent_bd if agent_bd else config.get("billing_day", 1),
             "interval": "mo",
         }

@@ -1,7 +1,7 @@
 """Tests for individual collector implementations.
 
-Covers Claude, Gemini, Codex, and Aider collectors with mocked file-system
-access.  Python 3.8 compatible -- no walrus operator, no match/case.
+Covers Claude, Gemini, and Codex collectors with mocked file-system
+access. Python 3.8 compatible.
 """
 
 import json
@@ -180,8 +180,8 @@ class TestClaudeGetStats:
         expected_keys = {
             "messages", "sessions", "input_tokens", "output_tokens", "period_cost",
             "alltime_cost", "model_usage",
-            "first_session", "total_messages", "total_sessions",
-            "tool_calls",
+            "first_session", "last_active", "total_messages", "total_sessions",
+            "tool_calls", "period_cost_estimated",
         }
         assert set(stats.keys()) == expected_keys
 
@@ -244,25 +244,25 @@ class TestClaudePlanInfo:
         assert info["billing_day"] == 1
 
     def test_explicit_claude_plan(self):
-        info = ClaudeCollector().get_plan_info({"claude_plan": "pro"})
+        info = ClaudeCollector().get_plan_info({"agent_plans": {"claude": "pro"}})
         assert info["plan_name"] == "pro"
         assert info["plan_price"] == 20
 
     def test_env_var_overrides_config(self):
         with patch.dict(os.environ, {"CLAUDE_PLAN": "pro"}):
-            info = ClaudeCollector().get_plan_info({"claude_plan": "max20x"})
+            info = ClaudeCollector().get_plan_info({"agent_plans": {"claude": "max20x"}})
         assert info["plan_name"] == "pro"
         assert info["plan_price"] == 20
 
     def test_env_var_invalid_falls_back_to_config(self):
         with patch.dict(os.environ, {"CLAUDE_PLAN": "bogus"}):
-            info = ClaudeCollector().get_plan_info({"claude_plan": "max20x"})
+            info = ClaudeCollector().get_plan_info({"agent_plans": {"claude": "max20x"}})
         assert info["plan_name"] == "max20x"
         assert info["plan_price"] == 200
 
     def test_annual_billing(self):
         info = ClaudeCollector().get_plan_info({
-            "claude_plan": "pro",
+            "agent_plans": {"claude": "pro"},
             "billing_interval": "yr",
         })
         assert info["plan_price"] == pytest.approx(200 / 12)
@@ -271,7 +271,7 @@ class TestClaudePlanInfo:
     def test_annual_billing_no_annual_price(self):
         """max5x has no annual pricing -- should fall back to monthly."""
         info = ClaudeCollector().get_plan_info({
-            "claude_plan": "max5x",
+            "agent_plans": {"claude": "max5x"},
             "billing_interval": "yr",
         })
         assert info["plan_price"] == 100
@@ -289,7 +289,7 @@ class TestClaudePlanInfo:
         assert info["plan_name"] == "free"
         err = capsys.readouterr().err
         assert "Warning" in err
-        assert "burnctl config claude_plan" in err
+        assert "burnctl config --claude billing_plan" in err
 
     def test_warning_printed_when_default_and_config_file_has_no_claude_plan(
         self, tmp_path, capsys,
@@ -302,21 +302,21 @@ class TestClaudePlanInfo:
         assert info["plan_name"] == "free"
         err = capsys.readouterr().err
         assert "Warning" in err
-        assert "burnctl config claude_plan" in err
+        assert "burnctl config --claude billing_plan" in err
 
     def test_no_warning_when_config_file_has_claude_plan(self, tmp_path, capsys):
         """No warning when config.json explicitly includes claude_plan."""
         cfg = tmp_path / "config.json"
-        cfg.write_text(json.dumps({"claude_plan": "max5x"}))
+        cfg.write_text(json.dumps({"agent_plans": {"claude": "max5x"}}))
         with patch("builtins.open", mock_open(read_data=cfg.read_text())):
-            info = ClaudeCollector().get_plan_info({"claude_plan": "max5x"})
+            info = ClaudeCollector().get_plan_info({"agent_plans": {"claude": "max5x"}})
         assert info["plan_name"] == "max5x"
         err = capsys.readouterr().err
         assert err == ""
 
     def test_no_warning_when_non_default_plan_from_config(self, capsys):
         """No warning when config provides a plan other than max5x."""
-        info = ClaudeCollector().get_plan_info({"claude_plan": "pro"})
+        info = ClaudeCollector().get_plan_info({"agent_plans": {"claude": "pro"}})
         assert info["plan_name"] == "pro"
         err = capsys.readouterr().err
         assert err == ""
@@ -332,7 +332,7 @@ class TestClaudePlanInfo:
     def test_no_warning_when_claude_plan_set_flag(self, capsys):
         """No warning when _claude_plan_set sentinel is truthy in config."""
         info = ClaudeCollector().get_plan_info({
-            "claude_plan": "max5x",
+            "agent_plans": {"claude": "max5x"},
             "_claude_plan_set": True,
         })
         assert info["plan_name"] == "max5x"
@@ -344,7 +344,7 @@ class TestClaudePlanInfo:
         with patch("builtins.open", side_effect=OSError("no file")):
             ClaudeCollector().get_plan_info({})
         err = capsys.readouterr().err
-        assert "burnctl config claude_plan" in err
+        assert "burnctl config --claude billing_plan" in err
 
     def test_warning_mentions_free_default(self, capsys):
         """Warning text mentions the defaulted plan name."""
@@ -376,7 +376,7 @@ class TestClaudePlanInfo:
             info = ClaudeCollector().get_plan_info({})
         assert info["plan_name"] == "free"
         err = capsys.readouterr().err
-        assert "burnctl config claude_plan" in err
+        assert "burnctl config --claude billing_plan" in err
 
 
 class TestClaudeUpgradeUrl:
@@ -848,6 +848,41 @@ class TestGeminiGetStats:
 
         assert stats["first_session"] == "2026-03-05"
 
+    def test_stale_file_mtime_does_not_hide_current_period_session(self, tmp_path):
+        session = {
+            "startTime": "2026-04-17T18:23:54Z",
+            "messages": [
+                {
+                    "type": "user",
+                    "timestamp": "2026-04-17T18:24:08Z",
+                    "content": "today",
+                },
+                {
+                    "type": "gemini",
+                    "timestamp": "2026-04-17T18:26:41Z",
+                    "model": "gemini-3-flash-preview",
+                    "tokens": {"input": 100, "output": 50, "cached": 0},
+                    "toolCalls": [{"name": "read_file"}],
+                },
+            ],
+        }
+        fpath = self._make_session_file(tmp_path, "session-today.json", session)
+        stale_ts = datetime(2026, 4, 17, 16, 4, 50).timestamp()
+        os.utime(fpath, (stale_ts, stale_ts))
+
+        with patch("burnctl.collectors.gemini.glob.glob", return_value=[fpath]):
+            stats = GeminiCollector().get_stats(
+                datetime(2026, 4, 17),
+                datetime(2026, 5, 17),
+                datetime(2026, 4, 17, 20, 0, 0),
+            )
+
+        assert stats is not None
+        assert stats["messages"] == 1
+        assert stats["sessions"] == 1
+        assert stats["tool_calls"] == 1
+        assert stats["last_active"] == "2026-04-17"
+
 
 class TestGeminiPlanInfo:
     def test_default(self):
@@ -857,22 +892,48 @@ class TestGeminiPlanInfo:
         assert info["billing_day"] == 1
 
     def test_ai_pro(self):
-        info = GeminiCollector().get_plan_info({"gemini_plan": "ai_pro"})
+        info = GeminiCollector().get_plan_info({"agent_plans": {"gemini": "ai_pro"}})
         assert info["plan_name"] == "ai_pro"
         assert info["plan_price"] == 19.99
 
     def test_ai_ultra(self):
-        info = GeminiCollector().get_plan_info({"gemini_plan": "ai_ultra"})
+        info = GeminiCollector().get_plan_info({"agent_plans": {"gemini": "ai_ultra"}})
         assert info["plan_name"] == "ai_ultra"
         assert info["plan_price"] == 249.99
 
     def test_unknown_plan_defaults_zero(self):
-        info = GeminiCollector().get_plan_info({"gemini_plan": "bogus"})
+        info = GeminiCollector().get_plan_info({"agent_plans": {"gemini": "bogus"}})
         assert info["plan_price"] == 0
 
     def test_custom_billing_day(self):
         info = GeminiCollector().get_plan_info({"billing_day": 15})
         assert info["billing_day"] == 15
+
+    def test_cost_uses_historical_model_pricing(self, tmp_path):
+        session = tmp_path / "session-1.json"
+        session.write_text(json.dumps({
+            "startTime": "2026-04-17T10:00:00+00:00",
+            "messages": [
+                {"type": "user", "timestamp": "2026-04-17T10:00:01+00:00"},
+                {
+                    "type": "gemini",
+                    "timestamp": "2026-04-17T10:00:02+00:00",
+                    "model": "gemini-3-flash-preview",
+                    "tokens": {"input": 1000, "output": 100, "cached": 0},
+                },
+            ],
+        }))
+
+        with patch("burnctl.collectors.gemini.glob.glob", return_value=[str(session)]), \
+             patch("burnctl.collectors.gemini.get_model_pricing_for_time", return_value={
+                 "input": 2.0, "output": 10.0, "cache_read": 0.2,
+             }):
+            start = datetime(2026, 4, 17, 0, 0, 0)
+            end = datetime(2026, 4, 18, 0, 0, 0)
+            stats = GeminiCollector().get_stats(start, end, end)
+
+        assert stats["period_cost"] == pytest.approx(0.003)
+        assert stats["alltime_cost"] == pytest.approx(0.003)
 
 
 class TestGeminiUpgradeUrl:
@@ -1160,8 +1221,8 @@ class TestCodexGetStats:
 
         expected_keys = {
             "messages", "sessions", "input_tokens", "output_tokens", "period_cost",
-            "alltime_cost", "model_usage",
-            "first_session", "total_messages", "total_sessions",
+            "alltime_cost", "model_usage", "daily_messages",
+            "first_session", "last_active", "total_messages", "total_sessions",
             "tool_calls",
         }
         assert set(stats.keys()) == expected_keys
@@ -1425,17 +1486,17 @@ class TestCodexPlanInfo:
         assert info["billing_day"] == 1
 
     def test_plus(self):
-        info = CodexCollector().get_plan_info({"codex_plan": "plus"})
+        info = CodexCollector().get_plan_info({"agent_plans": {"codex": "plus"}})
         assert info["plan_name"] == "plus"
         assert info["plan_price"] == 20
 
     def test_pro(self):
-        info = CodexCollector().get_plan_info({"codex_plan": "pro"})
+        info = CodexCollector().get_plan_info({"agent_plans": {"codex": "pro"}})
         assert info["plan_name"] == "pro"
         assert info["plan_price"] == 200
 
     def test_unknown_plan_defaults_zero(self):
-        info = CodexCollector().get_plan_info({"codex_plan": "bogus"})
+        info = CodexCollector().get_plan_info({"agent_plans": {"codex": "bogus"}})
         assert info["plan_price"] == 0
 
     def test_custom_billing_day(self):
@@ -1444,9 +1505,63 @@ class TestCodexPlanInfo:
 
     def test_agent_specific_billing_day(self):
         info = CodexCollector().get_plan_info(
-            {"billing_day": 20, "codex_billing_day": 17}
+            {"billing_day": 20, "agent_billing_days": {"codex": 17}}
         )
         assert info["billing_day"] == 17
+
+    def test_cost_uses_historical_model_pricing(self, tmp_path):
+        session_dir = tmp_path / "sessions"
+        session_dir.mkdir()
+        session_file = session_dir / "s1.jsonl"
+        session_file.write_text("\n".join([
+            json.dumps({
+                "type": "session_meta",
+                "timestamp": "2026-04-17T10:00:00Z",
+                "payload": {"timestamp": "2026-04-17T10:00:00Z"},
+            }),
+            json.dumps({
+                "type": "turn_context",
+                "timestamp": "2026-04-17T10:00:00Z",
+                "payload": {"model": "gpt-5.4"},
+            }),
+            json.dumps({
+                "type": "event_msg",
+                "timestamp": "2026-04-17T10:05:00Z",
+                "payload": {
+                    "type": "token_count",
+                    "info": {"total_token_usage": {
+                        "input_tokens": 1000, "output_tokens": 100, "cached_input_tokens": 0,
+                    }},
+                },
+            }),
+            json.dumps({
+                "type": "event_msg",
+                "timestamp": "2026-04-17T10:10:00Z",
+                "payload": {
+                    "type": "token_count",
+                    "info": {"total_token_usage": {
+                        "input_tokens": 3000, "output_tokens": 300, "cached_input_tokens": 0,
+                    }},
+                },
+            }),
+        ]) + "\n")
+
+        prices = [
+            {"input": 1.0, "output": 5.0, "cache_read": 0.1},
+            {"input": 2.0, "output": 10.0, "cache_read": 0.2},
+            {"input": 1.0, "output": 5.0, "cache_read": 0.1},
+            {"input": 2.0, "output": 10.0, "cache_read": 0.2},
+        ]
+
+        with patch("burnctl.collectors.codex.SESSIONS_DIR", str(session_dir)), \
+             patch("burnctl.collectors.codex.HISTORY_FILE", str(tmp_path / "history.jsonl")), \
+             patch("burnctl.collectors.codex.get_model_pricing_for_time", side_effect=prices):
+            start = datetime(2026, 4, 17, 0, 0, 0, tzinfo=timezone.utc)
+            end = datetime(2026, 4, 18, 0, 0, 0, tzinfo=timezone.utc)
+            stats = CodexCollector().get_stats(start, end, end)
+
+        assert stats["period_cost"] == pytest.approx(0.0075)
+        assert stats["alltime_cost"] == pytest.approx(0.0075)
 
 
 class TestCodexUpgradeUrl:
@@ -2062,7 +2177,7 @@ class TestApiUsageCollectorGetStats:
         expected_keys = {
             "messages", "sessions", "input_tokens", "output_tokens", "period_cost",
             "alltime_cost", "model_usage",
-            "first_session", "total_messages", "total_sessions",
+            "first_session", "last_active", "total_messages", "total_sessions",
             "tool_calls",
         }
         assert set(stats.keys()) == expected_keys
@@ -2101,6 +2216,17 @@ class TestApiUsageCollectorPlanInfo:
         info = ApiUsageCollector("openrouter", "OpenRouter").get_plan_info({"billing_day": 15})
         assert info["billing_day"] == 15
 
+    def test_agent_specific_plan_and_billing_day(self):
+        info = ApiUsageCollector("openrouter", "OpenRouter").get_plan_info(
+            {
+                "billing_day": 15,
+                "agent_plans": {"openrouter": "enterprise"},
+                "agent_billing_days": {"openrouter": 9},
+            }
+        )
+        assert info["plan_name"] == "enterprise"
+        assert info["billing_day"] == 9
+
 
 class TestOpenRouterCollector:
     def test_unavailable_without_api_key(self, monkeypatch):
@@ -2112,7 +2238,7 @@ class TestOpenRouterCollector:
     def test_stats_from_activity_and_credits(self, monkeypatch):
         monkeypatch.setenv("OPENROUTER_MGMT_API_KEY", "sk-test")
 
-        def fake_get_json(path, api_key):
+        def fake_get_json(path, api_key, timeout=10):
             assert api_key == "sk-test"
             if path == "/activity":
                 return {
@@ -2154,7 +2280,7 @@ class TestOpenRouterCollector:
 
         assert stats is not None
         assert stats["messages"] == 42
-        assert stats["sessions"] == 1
+        assert stats["sessions"] is None
         assert stats["input_tokens"] == 20000000
         assert stats["output_tokens"] == 14000000
         assert stats["period_cost"] == pytest.approx(12.34)
@@ -2169,7 +2295,7 @@ class TestOpenRouterCollector:
     def test_merges_live_ledger_after_activity_cutoff(self, monkeypatch):
         monkeypatch.setenv("OPENROUTER_MGMT_API_KEY", "sk-test")
 
-        def fake_get_json(path, api_key):
+        def fake_get_json(path, api_key, timeout=10):
             if path == "/activity":
                 return {
                     "data": [
@@ -2216,7 +2342,7 @@ class TestOpenRouterCollector:
         )
 
         assert stats["messages"] == 2
-        assert stats["sessions"] == 2
+        assert stats["sessions"] is None
         assert stats["input_tokens"] == 3000
         assert stats["output_tokens"] == 3500
         assert stats["period_cost"] == pytest.approx(0.03)
@@ -2225,7 +2351,7 @@ class TestOpenRouterCollector:
     def test_returns_none_when_activity_denied(self, monkeypatch):
         monkeypatch.setenv("OPENROUTER_MGMT_API_KEY", "sk-test")
 
-        def fake_get_json(path, api_key):
+        def fake_get_json(path, api_key, timeout=10):
             raise urllib.error.HTTPError(path, 403, "forbidden", {}, None)
 
         monkeypatch.setattr(

@@ -5,11 +5,44 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+## [0.4.0] - 2026-04-19
+
+### Added
+
+- `burnctl --top-mode` (-L) auto-refreshing dashboard for real-time token burn monitoring
+- Direct API tracking for ElevenLabs: live character usage, history, and subscription tier detection
+- First-class support for Inworld AI in the main dashboard grid
+- "Last Active" field for all agents and providers to show the most recent activity date
+- SIGTERM handling for OpenRouter proxy to support clean shutdowns in background services
+- Timestamped pricing history for Gemini and Codex so historical totals use the price in effect at event time
+
+### Changed
+
+- Bumped version to 0.4.0
+- Optimized GeminiCollector and CodexCollector to skip stale session files in top-mode
+- Refactored OpenRouter proxy to stream SSE responses line-by-line (zero buffering OOM protection)
+- Increased OpenRouter API reliability with auto-adjusting timeouts in live mode
+- Standardized all collectors to return historical ROI data even when current period usage is zero
+- Removed Aider support and the repo-local Claude scaffolding files
+- Billing periods now start at local midnight on the configured billing day
+- Report totals now consistently use only the agents shown in the main grid
+- Claude period cost is now explicitly labeled as estimated when derived from all-time model ratios
+- Model breakdown shares now use displayed total tokens and no longer show misleading current-price columns
+
+### Fixed
+
+- CodexCollector 0-usage bug: history.jsonl messages are now correctly attributed to the current period
+- `NoneType` and `AttributeError` crashes in several collectors when handling `null` JSON payloads
+- Snapshot mismatches and test mock regressions from report structure changes
+- OpenRouter proxy now correctly handles hop-by-hop headers and Content-Length during streaming
+
 ## [0.3.1] - 2026-04-17
 
 ### Added
 
-- `man burnctl` installed as a packaged manual page
+- Installed man page at `man burnctl`
 - Manual reference in `burnctl --help`
 
 ### Changed
@@ -17,17 +50,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Bumped version to 0.3.1
 - README install instructions now use GitHub/local install paths instead of PyPI
 - Package metadata now uses the GitHub noreply contact email
+- Per-agent billing config now uses scoped syntax like `burnctl config --codex billing_plan plus billing_day 18`
 
 ### Fixed
 
 - Codex per-agent billing day now honors `codex_billing_day`
+- Gemini current-period activity no longer gets hidden by stale session file mtimes
 - Python installs now place the man page under `share/man/man1` so `man burnctl` works
 
 ## [0.3.0] - 2026-04-03
 
 ### Added
 
-- Per-agent billing day config (`claude_billing_day`, `gemini_billing_day`, `codex_billing_day`); set to 0 to use global `billing_day`
+- Per-agent billing day support for Claude, Gemini, and Codex
 - Cache hit % visibility in MODEL BREAKDOWN for Claude and Gemini models
 - New models in pricing tables: gpt-5.4-mini, gpt-5.4-nano, gpt-5.3-chat, o3-pro, o4-mini, gemini-3.1-flash-lite, gemini-2.5-flash-lite
 
@@ -98,7 +133,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Claude Code collector (reads `~/.claude/stats-cache.json`)
 - Gemini CLI collector (parses `~/.gemini/` session history)
 - OpenAI Codex CLI collector (parses `~/.codex/sessions/` JSONL)
-- Aider collector (parses `.aider.chat.history.md` cost lines)
 - Local/Ollama collector (detection stub, always $0)
 - Stub collector for OpenCode (future support)
 - Multi-column terminal report with box drawing and ANSI colors

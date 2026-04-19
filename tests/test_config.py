@@ -12,11 +12,14 @@ from burnctl.config import (
     ANNUAL_PRICES,
     DEFAULTS,
     PLAN_PRICES,
+    PUBLIC_GLOBAL_KEYS,
     THEMES,
     _INTERVAL_ALIASES,
     effective_price,
     load,
     save,
+    set_scoped_values,
+    set_values,
     set_value,
     show,
 )
@@ -43,8 +46,21 @@ class TestConstants:
             "gemini_billing_day",
             "codex_plan",
             "codex_billing_day",
+            "agent_plans",
+            "agent_billing_days",
         }
         assert set(DEFAULTS.keys()) == expected
+
+    def test_public_global_keys(self):
+        assert set(PUBLIC_GLOBAL_KEYS) == {
+            "billing_day",
+            "billing_interval",
+            "default_agents",
+            "theme",
+            "no_color",
+            "simple",
+            "compact",
+        }
 
     def test_defaults_billing_day(self):
         assert DEFAULTS["billing_day"] == 1
@@ -155,13 +171,18 @@ class TestLoad:
 
     def test_saved_config_merges_over_defaults(self, tmp_path):
         config_file = tmp_path / "config.json"
-        saved = {"billing_day": 25, "claude_plan": "pro"}
+        saved = {
+            "billing_day": 25,
+            "agent_plans": {"claude": "pro"},
+            "agent_billing_days": {"codex": 18},
+        }
         config_file.write_text(json.dumps(saved))
 
         with patch("burnctl.config.CONFIG_FILE", str(config_file)):
             config = load()
         assert config["billing_day"] == 25
-        assert config["claude_plan"] == "pro"
+        assert config["agent_plans"]["claude"] == "pro"
+        assert config["agent_billing_days"]["codex"] == 18
         # Defaults for unset keys should still be present
         assert config["theme"] == DEFAULTS["theme"]
         assert config["no_color"] == DEFAULTS["no_color"]
@@ -300,12 +321,23 @@ class TestShow:
         out = capsys.readouterr().out
         assert fake_config in out
 
-    def test_shows_all_keys(self, capsys):
+    def test_shows_public_global_keys(self, capsys):
         with patch("burnctl.config.load", return_value=dict(DEFAULTS)):
             show()
         out = capsys.readouterr().out
-        for key in DEFAULTS:
+        for key in PUBLIC_GLOBAL_KEYS:
             assert key in out
+        assert "claude_plan" not in out
+
+    def test_shows_scoped_agent_settings(self, capsys):
+        cfg = dict(DEFAULTS)
+        cfg["agent_plans"] = {"codex": "pro"}
+        cfg["agent_billing_days"] = {"codex": 18}
+        with patch("burnctl.config.load", return_value=cfg):
+            show()
+        out = capsys.readouterr().out
+        assert "codex.billing_plan: pro" in out
+        assert "codex.billing_day: 18" in out
 
     def test_modified_marker(self, capsys):
         modified_config = dict(DEFAULTS)
@@ -419,23 +451,52 @@ class TestSetValue:
                 set_value("billing_day", "abc")
             assert exc_info.value.code == 1
 
-    # ── claude_plan validation ──
+    # ── scoped billing_plan / billing_day validation ──
 
-    def test_plan_valid(self, tmp_path):
+    def test_scoped_plan_valid(self, tmp_path):
         config_dir = str(tmp_path)
         config_file = str(tmp_path / "config.json")
         with patch("burnctl.config.CONFIG_DIR", config_dir), \
              patch("burnctl.config.CONFIG_FILE", config_file), \
              patch("burnctl.config.load", return_value=dict(DEFAULTS)), \
              patch("burnctl.config.save") as mock_save:
-            set_value("claude_plan", "pro")
+            set_scoped_values("claude", [("billing_plan", "pro")])
         saved_config = mock_save.call_args[0][0]
-        assert saved_config["claude_plan"] == "pro"
+        assert saved_config["agent_plans"]["claude"] == "pro"
 
-    def test_plan_invalid_exits(self):
+    def test_scoped_plan_invalid_exits(self):
         with patch("burnctl.config.load", return_value=dict(DEFAULTS)):
             with pytest.raises(SystemExit) as exc_info:
-                set_value("claude_plan", "enterprise")
+                set_scoped_values("claude", [("billing_plan", "enterprise")])
+            assert exc_info.value.code == 1
+
+    def test_scoped_billing_day_valid(self, tmp_path):
+        config_dir = str(tmp_path)
+        config_file = str(tmp_path / "config.json")
+        with patch("burnctl.config.CONFIG_DIR", config_dir), \
+             patch("burnctl.config.CONFIG_FILE", config_file), \
+             patch("burnctl.config.load", return_value=dict(DEFAULTS)), \
+             patch("burnctl.config.save") as mock_save:
+            set_scoped_values("codex", [("billing_day", "18")])
+        saved_config = mock_save.call_args[0][0]
+        assert saved_config["agent_billing_days"]["codex"] == 18
+
+    def test_scoped_plan_and_day_can_be_set_together(self, tmp_path):
+        config_dir = str(tmp_path)
+        config_file = str(tmp_path / "config.json")
+        with patch("burnctl.config.CONFIG_DIR", config_dir), \
+             patch("burnctl.config.CONFIG_FILE", config_file), \
+             patch("burnctl.config.load", return_value=dict(DEFAULTS)), \
+             patch("burnctl.config.save") as mock_save:
+            set_scoped_values("codex", [("billing_plan", "pro"), ("billing_day", "18")])
+        saved_config = mock_save.call_args[0][0]
+        assert saved_config["agent_plans"]["codex"] == "pro"
+        assert saved_config["agent_billing_days"]["codex"] == 18
+
+    def test_scoped_key_rejects_legacy_flat_key(self):
+        with patch("burnctl.config.load", return_value=dict(DEFAULTS)):
+            with pytest.raises(SystemExit) as exc_info:
+                set_values([("claude_plan", "pro")])
             assert exc_info.value.code == 1
 
     # ── billing_interval + alias normalization ──
@@ -517,7 +578,7 @@ class TestSetValue:
         config_dir = str(tmp_path)
         config_file = str(tmp_path / "config.json")
         initial = dict(DEFAULTS)
-        initial["claude_plan"] = "max5x"  # No annual pricing
+        initial["agent_plans"] = {"claude": "max5x"}  # No annual pricing
         with patch("burnctl.config.CONFIG_DIR", config_dir), \
              patch("burnctl.config.CONFIG_FILE", config_file), \
              patch("burnctl.config.load", return_value=initial), \
@@ -610,8 +671,8 @@ class TestSetValue:
 
     # ── Plan + interval interaction warning ──
 
-    def test_plan_change_warns_when_interval_yr(self, tmp_path, capsys):
-        """Setting plan to non-pro when interval=yr should warn."""
+    def test_scoped_plan_change_no_warn_when_interval_yr(self, tmp_path, capsys):
+        """Scoped plan changes no longer emit a global annual-pricing warning."""
         config_dir = str(tmp_path)
         config_file = str(tmp_path / "config.json")
         initial = dict(DEFAULTS)
@@ -620,12 +681,12 @@ class TestSetValue:
              patch("burnctl.config.CONFIG_FILE", config_file), \
              patch("burnctl.config.load", return_value=initial), \
              patch("burnctl.config.save"):
-            set_value("claude_plan", "max5x")
+            set_scoped_values("claude", [("billing_plan", "max5x")])
         err = capsys.readouterr().err
-        assert "doesn't have annual pricing" in err
+        assert err == ""
 
-    def test_plan_change_no_warn_for_pro(self, tmp_path, capsys):
-        """Setting plan to pro when interval=yr should NOT warn."""
+    def test_scoped_plan_change_no_warn_for_pro(self, tmp_path, capsys):
+        """Scoped plan changes remain quiet for supported plans too."""
         config_dir = str(tmp_path)
         config_file = str(tmp_path / "config.json")
         initial = dict(DEFAULTS)
@@ -634,9 +695,21 @@ class TestSetValue:
              patch("burnctl.config.CONFIG_FILE", config_file), \
              patch("burnctl.config.load", return_value=initial), \
              patch("burnctl.config.save"):
-            set_value("claude_plan", "pro")
+            set_scoped_values("claude", [("billing_plan", "pro")])
         err = capsys.readouterr().err
         assert "doesn't have annual pricing" not in err
+
+    def test_set_values_multiple_globals(self, tmp_path):
+        config_dir = str(tmp_path)
+        config_file = str(tmp_path / "config.json")
+        with patch("burnctl.config.CONFIG_DIR", config_dir), \
+             patch("burnctl.config.CONFIG_FILE", config_file), \
+             patch("burnctl.config.load", return_value=dict(DEFAULTS)), \
+             patch("burnctl.config.save") as mock_save:
+            set_values([("billing_day", "20"), ("theme", "classic")])
+        saved_config = mock_save.call_args[0][0]
+        assert saved_config["billing_day"] == 20
+        assert saved_config["theme"] == "classic"
 
     # ── default_agents ──
 

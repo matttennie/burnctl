@@ -66,6 +66,7 @@ def _make_collector(
             "claude-3-sonnet-20251101": {"outputTokens": 20000},
         },
         "first_session": "2024-06-15",
+        "last_active": "2025-01-15",
         "total_messages": 500,
         "total_sessions": 50,
     }
@@ -103,6 +104,7 @@ def _make_agent_data(**overrides):
             "claude-3-sonnet-20251101": {"outputTokens": 20000},
         },
         "first_session": "2024-06-15",
+        "last_active": "2025-01-15",
         "total_messages": 500,
         "total_sessions": 50,
     }
@@ -812,12 +814,12 @@ class TestRenderFull:
         assert "MODEL BREAKDOWN" in result
 
     @patch("os.get_terminal_size")
-    def test_harness_hidden_from_top_report_but_kept_in_model_breakdown(self, mock_term):
+    def test_hidden_agent_kept_in_model_breakdown(self, mock_term):
         mock_term.return_value = os.terminal_size((140, 40))
         claude = _make_agent_data(id="claude", name="Claude")
-        aider = _make_agent_data(
-            id="aider",
-            name="Aider",
+        local = _make_agent_data(
+            id="local",
+            name="Local",
             period_cost=7.0,
             model_usage={
                 "openrouter/anthropic/claude-sonnet-4": {
@@ -826,12 +828,12 @@ class TestRenderFull:
                 },
             },
         )
-        stats = _make_stats(agents=[claude, aider], total_period_cost=19.5)
+        stats = _make_stats(agents=[claude, local], total_period_cost=19.5)
         result = render_full(stats, use_color=False)
         top_section, _, model_section = result.partition("MODEL BREAKDOWN")
         assert "Claude" in top_section
-        assert "Aider" not in top_section
-        assert "Aider" in model_section
+        assert "Local" not in top_section
+        assert "Local" in model_section
 
     @patch("os.get_terminal_size")
     def test_no_model_breakdown_when_empty(self, mock_term):
@@ -889,12 +891,8 @@ class TestRenderFull:
         )
 
     @patch("os.get_terminal_size")
-    @patch("burnctl.pricing.get_agent_pricing")
-    def test_openrouter_model_prices_use_real_precision(self, mock_get_pricing, mock_term):
+    def test_openrouter_model_breakdown_uses_token_totals(self, mock_term):
         mock_term.return_value = os.terminal_size((140, 40))
-        mock_get_pricing.return_value = {
-            "minimax/minimax-m2.7": {"input": 0.30, "output": 1.20},
-        }
         stats = _make_stats(agents=[
             _make_agent_data(
                 id="openrouter",
@@ -910,8 +908,9 @@ class TestRenderFull:
             ),
         ])
         result = render_full(stats, use_color=False)
-        assert "$0.30/M" in result
-        assert "$1.20/M" in result
+        assert "3.0M" in result
+        assert "1.0M" in result
+        assert "2.0M" in result
 
     @patch("os.get_terminal_size")
     def test_system_total_for_multi_agent(self, mock_term):
@@ -952,7 +951,7 @@ class TestRenderFull:
 
 
 class TestModelBreakdownTokenDisplay:
-    """Test model breakdown shows input/output tokens and pricing."""
+    """Test model breakdown shows input/output tokens and token-share bars."""
 
     @patch("os.get_terminal_size")
     def test_shows_in_out_columns(self, mock_term):
@@ -980,8 +979,8 @@ class TestModelBreakdownTokenDisplay:
         assert "1000.0K" in result or "1.0M" in result
 
     @patch("os.get_terminal_size")
-    def test_shows_pricing_per_million(self, mock_term):
-        """Each model row shows $/M pricing."""
+    def test_does_not_show_current_price_columns(self, mock_term):
+        """The model breakdown should not imply current rates apply historically."""
         mock_term.return_value = os.terminal_size((120, 40))
         agent = _make_agent_data(
             model_usage={
@@ -991,7 +990,7 @@ class TestModelBreakdownTokenDisplay:
         )
         stats = _make_stats(agents=[agent])
         result = render_full(stats, use_color=False)
-        assert "/M" in result
+        assert "/M" not in result
 
     @patch("os.get_terminal_size")
     def test_multiple_models_all_shown(self, mock_term):
@@ -1125,13 +1124,13 @@ class TestRenderCompact:
         parts = result.split(" | ")
         assert len(parts) == 3  # A, B, Total
 
-    def test_harness_agents_filtered_from_compact_summary(self):
+    def test_hidden_agents_filtered_from_compact_summary(self):
         claude = _make_agent_data(id="claude", name="Claude", period_cost=10.0)
-        aider = _make_agent_data(id="aider", name="Aider", period_cost=5.0)
-        stats = _make_stats(agents=[claude, aider], total_period_cost=15.0)
+        local = _make_agent_data(id="local", name="Local", period_cost=5.0)
+        stats = _make_stats(agents=[claude, local], total_period_cost=15.0)
         result = render_compact(stats)
         assert "Claude: $10.00" in result
-        assert "Aider" not in result
+        assert "Local" not in result
         assert "Total" not in result
 
 
@@ -1256,11 +1255,11 @@ class TestRenderAccessible:
         assert "All-time messages: 500" in result
         assert "All-time sessions: 50" in result
 
-    def test_accessible_filters_harness_from_main_and_lists_model_breakdown(self):
+    def test_accessible_filters_hidden_agent_from_main_and_lists_model_breakdown(self):
         claude = _make_agent_data(id="claude", name="Claude", period_cost=10.0)
-        aider = _make_agent_data(
-            id="aider",
-            name="Aider",
+        local = _make_agent_data(
+            id="local",
+            name="Local",
             period_cost=5.0,
             model_usage={
                 "openrouter/anthropic/claude-sonnet-4": {
@@ -1269,12 +1268,12 @@ class TestRenderAccessible:
                 },
             },
         )
-        stats = _make_stats(agents=[claude, aider], total_period_cost=15.0)
+        stats = _make_stats(agents=[claude, local], total_period_cost=15.0)
         result = render_accessible(stats)
         main_section, _, model_section = result.partition("Model breakdown:")
         assert "Agent: Claude" in main_section
-        assert "Agent: Aider" not in main_section
-        assert "Aider" in model_section
+        assert "Agent: Local" not in main_section
+        assert "Local" in model_section
         assert "total 3,000" in model_section
 
 
@@ -1401,6 +1400,7 @@ def _make_inactive_agent(**overrides):
         "value_ratio": 0.0,
         "model_usage": {},
         "first_session": "",
+        "last_active": "",
         "total_messages": 0,
         "total_sessions": 0,
         "inactive": True,
@@ -1510,7 +1510,7 @@ class TestInactiveAgents:
         inactive_agent = [a for a in result["agents"] if a["id"] == "idle"][0]
         assert inactive_agent["inactive"] is True
         active_agent = [a for a in result["agents"] if a["id"] == "claude"][0]
-        assert "inactive" not in active_agent
+        assert active_agent["inactive"] is False
 
     @patch("os.get_terminal_size")
     def test_render_full_inactive_shows_inactive_in_header(self, mock_term):

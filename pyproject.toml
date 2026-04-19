@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "burnctl"
-version = "0.3.1"
-description = "Unified AI coding agent usage reporter"
+version = "0.4.0"
+description = "Local AI usage and cost tracker for Claude Code, Gemini CLI, Codex CLI, OpenRouter, and more"
 readme = "README.md"
 license = {text = "MIT"}
 authors = [{name = "Matthew Tennie", email = "4433555+matttennie@users.noreply.github.com"}]

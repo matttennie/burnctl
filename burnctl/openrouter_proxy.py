@@ -2,6 +2,7 @@
 
 import json
 import os
+import signal
 import sys
 import urllib.error
 import urllib.request
@@ -59,32 +60,44 @@ def _parse_json_usage(payload):
     }
 
 
+def _parse_sse_line(raw, current_model="unknown", current_id=""):
+    """Extract usage or model info from a single SSE data line."""
+    if not raw.startswith(b"data: "):
+        return None, current_model, current_id
+    data = raw[6:].strip()
+    if not data or data == b"[DONE]":
+        return None, current_model, current_id
+    try:
+        obj = json.loads(data.decode("utf-8"))
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return None, current_model, current_id
+
+    if not isinstance(obj, dict):
+        return None, current_model, current_id
+
+    model = str(obj.get("model", current_model))
+    request_id = str(obj.get("id", "") or obj.get("generation_id", "") or current_id)
+    maybe = _parse_json_usage(obj)
+    if maybe is not None:
+        maybe["model"] = model
+        if request_id:
+            maybe["request_id"] = request_id
+        return maybe, model, request_id
+
+    return None, model, request_id
+
+
 def _parse_sse_usage(lines):
-    """Extract a ledger record from streamed SSE lines if usage appears."""
+    """Extract a ledger record from streamed SSE lines if usage appears.
+    (Kept for backward compatibility and testing).
+    """
     record = None
     model = "unknown"
     request_id = ""
     for raw in lines:
-        if not raw.startswith(b"data: "):
-            continue
-        data = raw[6:].strip()
-        if not data or data == b"[DONE]":
-            continue
-        try:
-            obj = json.loads(data.decode("utf-8"))
-        except (json.JSONDecodeError, UnicodeDecodeError):
-            continue
-        if isinstance(obj, dict):
-            if obj.get("model"):
-                model = str(obj.get("model"))
-            if obj.get("id") or obj.get("generation_id"):
-                request_id = str(obj.get("id", "") or obj.get("generation_id", ""))
-            maybe = _parse_json_usage(obj)
-            if maybe is not None:
-                record = maybe
-                record["model"] = model
-                if request_id:
-                    record["request_id"] = request_id
+        maybe, model, request_id = _parse_sse_line(raw, model, request_id)
+        if maybe:
+            record = maybe
     return record
 
 
@@ -140,15 +153,17 @@ class _ProxyHandler(BaseHTTPRequestHandler):
 
                 ledger_record = None
                 if "text/event-stream" in content_type:
-                    sse_lines = []
+                    model = "unknown"
+                    request_id = ""
                     while True:
                         chunk = resp.readline()
                         if not chunk:
                             break
-                        sse_lines.append(chunk)
                         self.wfile.write(chunk)
                         self.wfile.flush()
-                    ledger_record = _parse_sse_usage(sse_lines)
+                        maybe, model, request_id = _parse_sse_line(chunk, model, request_id)
+                        if maybe:
+                            ledger_record = maybe
                 else:
                     payload = resp.read()
                     self.wfile.write(payload)
@@ -180,7 +195,16 @@ def run_proxy(host=None, port=None, ledger_path=None):
     port = int(port or os.environ.get("BURNCTL_PROXY_PORT", _DEFAULT_PORT))
     ledger_path = ledger_path or os.environ.get("BURNCTL_OPENROUTER_LEDGER", "")
     _ProxyHandler.ledger_path = ledger_path or None
+
     server = ThreadingHTTPServer((host, port), _ProxyHandler)
+
+    # Handle SIGTERM for graceful shutdown (e.g. from launchd/systemd)
+    def handle_sigterm(signum, frame):
+        print("burnctl proxy: received SIGTERM, shutting down...", file=sys.stderr)
+        server.shutdown()
+
+    signal.signal(signal.SIGTERM, handle_sigterm)
+
     print("burnctl OpenRouter proxy listening on http://%s:%s" % (host, port))
     if ledger_path:
         print("ledger:", ledger_path)

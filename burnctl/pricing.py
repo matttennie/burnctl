@@ -10,6 +10,7 @@ from typing import Dict, Optional
 import time
 import urllib.error
 import urllib.request
+from datetime import datetime, timezone
 
 # ── Gemini (per-million-token rates, USD) ────────────────────────
 
@@ -43,6 +44,18 @@ OPENAI_PRICING = {
     "codex-mini": {"input": 0.75, "output": 3.0, "cache_read": 0.025},
 }
 
+# ── ElevenLabs (per-million-character rates, USD) ────────────────
+
+ELEVENLABS_PRICING = {
+    "elevenlabs-tts": {"input": 0, "output": 300.0},  # $0.30 per 1k characters
+}
+
+# ── Inworld (per-million-token equivalent rates, USD) ────────────
+
+INWORLD_PRICING = {
+    "inworld-interaction": {"input": 5.0, "output": 10.0},
+}
+
 _OPENROUTER_MODELS_URL = "https://openrouter.ai/api/v1/models"
 _OPENROUTER_KEY_ENV_VARS = (
     "OPENROUTER_MGMT_API_KEY",
@@ -52,6 +65,123 @@ _OPENROUTER_KEY_ENV_VARS = (
 _OPENROUTER_PRICING_TTL_SECONDS = 60
 _OPENROUTER_PRICING_CACHE: Optional[Dict[str, Dict[str, float]]] = None
 _OPENROUTER_PRICING_CACHE_TS = 0.0
+
+_PRICING_HISTORY_DIR = os.path.join(
+    os.path.expanduser("~"), ".local", "share", "burnctl",
+)
+_PRICING_HISTORY_FILE = os.path.join(_PRICING_HISTORY_DIR, "pricing-history.json")
+_HISTORY_TRACKED_AGENTS = {"gemini", "codex"}
+
+
+def _snapshot_now_iso():
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+
+
+def _parse_effective_from(value):
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00")).astimezone(
+            timezone.utc,
+        )
+    except (ValueError, TypeError):
+        return None
+
+
+def _copy_pricing_table(table):
+    copied = {}
+    for model, rates in (table or {}).items():
+        if isinstance(rates, dict):
+            copied[str(model)] = dict(rates)
+    return copied
+
+
+def _load_pricing_history():
+    if not os.path.isfile(_PRICING_HISTORY_FILE):
+        return {}
+    try:
+        with open(_PRICING_HISTORY_FILE, encoding="utf-8") as f:
+            payload = json.load(f)
+    except (OSError, ValueError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _save_pricing_history(history):
+    try:
+        os.makedirs(_PRICING_HISTORY_DIR, exist_ok=True)
+        with open(_PRICING_HISTORY_FILE, "w", encoding="utf-8") as f:
+            json.dump(history, f, indent=2, sort_keys=True)
+            f.write("\n")
+    except OSError:
+        return
+
+
+def _record_pricing_snapshot(agent_id, pricing_table):
+    if agent_id not in _HISTORY_TRACKED_AGENTS:
+        return
+    table = _copy_pricing_table(pricing_table)
+    if not table:
+        return
+    history = _load_pricing_history()
+    rows = history.get(agent_id)
+    if not isinstance(rows, list):
+        rows = []
+    if rows and isinstance(rows[-1], dict) and rows[-1].get("pricing") == table:
+        return
+    rows.append({
+        "effective_from": _snapshot_now_iso(),
+        "pricing": table,
+    })
+    history[agent_id] = rows
+    _save_pricing_history(history)
+
+
+def get_agent_pricing_for_time(agent_id, when=None):
+    """Return the pricing table effective at *when* for *agent_id*."""
+    current = get_agent_pricing(agent_id)
+    if agent_id not in _HISTORY_TRACKED_AGENTS or when is None:
+        return current
+
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=timezone.utc)
+    else:
+        when = when.astimezone(timezone.utc)
+
+    history = _load_pricing_history()
+    rows = history.get(agent_id)
+    if not isinstance(rows, list) or not rows:
+        return current
+
+    selected = None
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        effective_from = _parse_effective_from(row.get("effective_from"))
+        pricing = row.get("pricing")
+        if effective_from is None or not isinstance(pricing, dict):
+            continue
+        if effective_from <= when:
+            selected = _copy_pricing_table(pricing)
+        elif selected is None:
+            selected = _copy_pricing_table(pricing)
+            break
+        else:
+            break
+
+    return selected if selected is not None else current
+
+
+def get_model_pricing_for_time(agent_id, model_id, when=None):
+    """Return pricing for one model, resolved against historical snapshots."""
+    pricing_table = get_agent_pricing_for_time(agent_id, when) or {}
+    if model_id in pricing_table:
+        return pricing_table[model_id]
+    stripped = str(model_id)
+    if agent_id in ("claude", "codex", "gemini"):
+        import re
+        stripped = re.sub(r"-(\d{8}|latest)$", "", stripped)
+    return pricing_table.get(stripped, {})
 
 
 def _openrouter_api_key():
@@ -92,6 +222,13 @@ def _get_openrouter_pricing():
         with urllib.request.urlopen(req, timeout=10) as resp:
             payload = json.loads(resp.read().decode("utf-8"))
     except (urllib.error.URLError, urllib.error.HTTPError, ValueError, OSError):
+        if _OPENROUTER_PRICING_CACHE is not None:
+            return dict(_OPENROUTER_PRICING_CACHE)
+        _OPENROUTER_PRICING_CACHE = {}
+        _OPENROUTER_PRICING_CACHE_TS = now
+        return {}
+
+    if not isinstance(payload, dict):
         if _OPENROUTER_PRICING_CACHE is not None:
             return dict(_OPENROUTER_PRICING_CACHE)
         _OPENROUTER_PRICING_CACHE = {}
@@ -140,7 +277,6 @@ def get_agent_pricing(agent_id):
     -------
     dict or None
         A ``{model_id: {input, output, ...}}`` mapping.
-        *None* for agents that self-report costs (e.g. Aider).
         An empty ``{}`` for local/free models.
     """
     if agent_id == "claude":
@@ -157,17 +293,23 @@ def get_agent_pricing(agent_id):
             }
 
     if agent_id == "gemini":
-        return dict(GEMINI_PRICING)
+        result = dict(GEMINI_PRICING)
+        _record_pricing_snapshot(agent_id, result)
+        return result
 
     if agent_id == "codex":
-        return dict(OPENAI_PRICING)
+        result = dict(OPENAI_PRICING)
+        _record_pricing_snapshot(agent_id, result)
+        return result
+
+    if agent_id == "elevenlabs":
+        return dict(ELEVENLABS_PRICING)
+
+    if agent_id == "inworld":
+        return dict(INWORLD_PRICING)
 
     if agent_id == "openrouter":
         return _get_openrouter_pricing()
-
-    if agent_id == "aider":
-        # Aider tracks costs internally; no external pricing table needed.
-        return None
 
     # Local models, unknown agents -- $0.
     return {}

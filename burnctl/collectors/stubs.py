@@ -22,5 +22,5 @@ class OpenCodeCollector(BaseCollector):
     def is_available(self):
         return False
 
-    def get_stats(self, start, end, ref_date):
+    def get_stats(self, start, end, ref_date, live=False):
         return None

@@ -22,7 +22,19 @@ DEFAULTS = {
     "gemini_billing_day": 0,
     "codex_plan": "free",
     "codex_billing_day": 0,
+    "agent_plans": {},
+    "agent_billing_days": {},
 }
+
+PUBLIC_GLOBAL_KEYS = (
+    "billing_day",
+    "billing_interval",
+    "default_agents",
+    "theme",
+    "no_color",
+    "simple",
+    "compact",
+)
 
 # Theme options: gradient (24-bit gradient), classic (16-color), colorblind, accessible
 THEMES = ("gradient", "classic", "colorblind", "accessible")
@@ -99,6 +111,28 @@ _VALIDATORS = {
     ),
 }
 
+_SCOPED_AGENTS = (
+    "claude", "gemini", "codex", "openrouter",
+    "elevenlabs", "inworld", "local", "opencode",
+)
+
+_SCOPED_KEYS = ("billing_plan", "billing_day")
+
+_SCOPED_PLAN_VALIDATORS = {
+    "claude": (
+        lambda v: v in PLAN_PRICES,
+        f"must be one of: {', '.join(PLAN_PRICES.keys())}",
+    ),
+    "gemini": (
+        lambda v: v in GEMINI_PLAN_PRICES,
+        f"must be one of: {', '.join(GEMINI_PLAN_PRICES.keys())}",
+    ),
+    "codex": (
+        lambda v: v in CODEX_PLAN_PRICES,
+        f"must be one of: {', '.join(CODEX_PLAN_PRICES.keys())}",
+    ),
+}
+
 
 def effective_price(plan, interval):
     """Get the effective monthly price for a *plan* + *interval* combo."""
@@ -116,16 +150,10 @@ def _first_run_hint():
         "\n"
         "    burnctl config billing_day  <1-31>   "
         "  # default billing day for all agents\n"
-        "    burnctl config claude_plan  <plan>    "
-        "  # free | pro | max5x | max20x\n"
-        "    burnctl config gemini_plan  <plan>    "
-        "  # none | ai_pro | ai_ultra\n"
-        "    burnctl config codex_plan   <plan>    "
-        "  # none | plus | pro\n"
-        "\n"
-        "  Per-agent billing day (0 = use global billing_day):\n"
-        "    burnctl config claude_billing_day 10\n"
-        "    burnctl config codex_billing_day  29\n"
+        "    burnctl config --codex billing_plan pro billing_day 18\n"
+        "    burnctl config --claude billing_plan pro\n"
+        "    burnctl config --gemini billing_plan ai_pro\n"
+        "    burnctl config --openrouter billing_plan enterprise billing_day 10\n"
         "\n"
         "  Run `burnctl config` to see all options.\n",
         file=sys.stderr,
@@ -150,7 +178,13 @@ def load():
                 saved = json.load(f)
             # Only merge known keys — reject arbitrary injected keys
             for key in DEFAULTS:
-                if key in saved:
+                if key not in saved:
+                    continue
+                if isinstance(DEFAULTS[key], dict) and isinstance(saved[key], dict):
+                    merged = dict(DEFAULTS[key])
+                    merged.update(saved[key])
+                    config[key] = merged
+                else:
                     config[key] = saved[key]
         except json.JSONDecodeError:
             print(
@@ -186,63 +220,66 @@ def show():
     config = load()
     print(f"Config file: {CONFIG_FILE}")
     print()
-    for key, val in sorted(config.items()):
+    for key in PUBLIC_GLOBAL_KEYS:
+        val = config[key]
         default = DEFAULTS.get(key)
         marker = "" if val == default else "  (modified)"
         print(f"  {key}: {val}{marker}")
+    scoped_agents = sorted(
+        set(config.get("agent_plans", {}).keys())
+        | set(config.get("agent_billing_days", {}).keys())
+    )
+    if scoped_agents:
+        print()
+        print("Scoped agent settings:")
+        for agent in scoped_agents:
+            plan = config.get("agent_plans", {}).get(agent, "")
+            billing_day = config.get("agent_billing_days", {}).get(agent, 0)
+            if plan:
+                print(f"  {agent}.billing_plan: {plan}")
+            if billing_day:
+                print(f"  {agent}.billing_day: {billing_day}")
     print()
-    print("Set values with: burnctl config <key> <value>")
-    print("  e.g.: burnctl config claude_plan pro")
-    print("        burnctl config gemini_plan ai_pro")
-    print("        burnctl config codex_plan plus")
-    print("        burnctl config billing_day 15")
-    print("        burnctl config codex_billing_day 29  # per-agent (0 = use global)")
+    print("Set global values with: burnctl config <key> <value> [<key> <value> ...]")
+    print("  e.g.: burnctl config billing_day 15 theme colorblind")
+    print("Set agent values with: burnctl config --<agent> billing_plan <plan> billing_day <day>")
+    print("  e.g.: burnctl config --codex billing_plan pro billing_day 18")
+    print("        burnctl config --gemini billing_plan ai_pro")
 
 
-def set_value(key, value):
-    """Set a single config *key* to *value* (with validation)."""
-    config = load()
+def _coerce_plain_value(key, value):
+    expected_type = type(DEFAULTS[key])
 
-    if key not in DEFAULTS:
-        print(f"Error: unknown config key '{key}'", file=sys.stderr)
+    if expected_type is bool:
+        if value.lower() in ("true", "1", "yes"):
+            return True
+        if value.lower() in ("false", "0", "no"):
+            return False
         print(
-            f"Valid keys: {', '.join(sorted(DEFAULTS.keys()))}",
+            f"Error: '{key}' must be true/false (or yes/no, 1/0).",
             file=sys.stderr,
         )
         sys.exit(1)
 
-    expected_type = type(DEFAULTS[key])
-
-    # Coerce string input to the expected type
-    if expected_type is bool:
-        if value.lower() in ("true", "1", "yes"):
-            value = True
-        elif value.lower() in ("false", "0", "no"):
-            value = False
-        else:
-            print(
-                f"Error: '{key}' must be true/false (or yes/no, 1/0).",
-                file=sys.stderr,
-            )
-            sys.exit(1)
-    elif expected_type is int:
+    if expected_type is int:
         try:
-            value = int(value)
+            return int(value)
         except ValueError:
             print(f"Error: '{key}' must be an integer.", file=sys.stderr)
             sys.exit(1)
 
-    # Normalize billing_interval aliases before validation
     if key == "billing_interval":
-        value = _INTERVAL_ALIASES.get(value.lower(), value.lower())
+        return _INTERVAL_ALIASES.get(value.lower(), value.lower())
 
-    # Run validation if one exists
+    return value
+
+
+def _validate_plain_value(key, value, config):
     validator, err_msg = _VALIDATORS.get(key, (None, None))
     if validator and not validator(value):
         print(f"Error: {key} {err_msg}.", file=sys.stderr)
         sys.exit(1)
 
-    # Warn about invalid plan+interval combos
     if key == "billing_interval" and value == "yr":
         plan = config.get("claude_plan", "free")
         if plan not in ANNUAL_PRICES:
@@ -258,6 +295,99 @@ def set_value(key, value):
             file=sys.stderr,
         )
 
-    config[key] = value
+
+def set_values(pairs):
+    """Set one or more global config key/value pairs."""
+    config = load()
+    for key, raw_value in pairs:
+        if key not in PUBLIC_GLOBAL_KEYS:
+            print(f"Error: unknown config key '{key}'", file=sys.stderr)
+            print(
+                f"Valid keys: {', '.join(PUBLIC_GLOBAL_KEYS)}",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        value = _coerce_plain_value(key, raw_value)
+        _validate_plain_value(key, value, config)
+        config[key] = value
+        print(f"Set {key} = {value}")
     save(config)
-    print(f"Set {key} = {value}")
+
+
+def _validate_scoped_plan(agent, value):
+    validator, err_msg = _SCOPED_PLAN_VALIDATORS.get(
+        agent, (lambda v: isinstance(v, str) and len(v) > 0, "must be a non-empty string")
+    )
+    if not validator(value):
+        print(f"Error: {agent} billing_plan {err_msg}.", file=sys.stderr)
+        sys.exit(1)
+
+
+def set_scoped_values(agent, pairs):
+    """Set one or more agent-scoped config key/value pairs."""
+    if agent not in _SCOPED_AGENTS:
+        print(f"Error: unknown agent '{agent}'", file=sys.stderr)
+        sys.exit(1)
+
+    config = load()
+    config.setdefault("agent_plans", {})
+    config.setdefault("agent_billing_days", {})
+
+    for key, raw_value in pairs:
+        if key not in _SCOPED_KEYS:
+            valid = ", ".join(_SCOPED_KEYS)
+            print(
+                f"Error: unknown scoped key '{key}'. Valid scoped keys: {valid}",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+
+        if key == "billing_plan":
+            _validate_scoped_plan(agent, raw_value)
+            config["agent_plans"][agent] = raw_value
+            print(f"Set {agent}.billing_plan = {raw_value}")
+        else:
+            try:
+                value = int(raw_value)
+            except ValueError:
+                print(f"Error: '{key}' must be an integer.", file=sys.stderr)
+                sys.exit(1)
+            if not _valid_agent_billing_day(value):
+                print(f"Error: {key} must be 0 (use global) or 1-31.", file=sys.stderr)
+                sys.exit(1)
+            config["agent_billing_days"][agent] = value
+            print(f"Set {agent}.billing_day = {value}")
+
+    save(config)
+
+
+def get_scoped_value(agent, key):
+    """Read one agent-scoped config value."""
+    if agent not in _SCOPED_AGENTS:
+        print(f"Error: unknown agent '{agent}'", file=sys.stderr)
+        sys.exit(1)
+    if key not in _SCOPED_KEYS:
+        valid = ", ".join(_SCOPED_KEYS)
+        print(
+            f"Error: unknown scoped key '{key}'. Valid scoped keys: {valid}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    config = load()
+    if key == "billing_plan":
+        value = config.get("agent_plans", {}).get(agent, "")
+        if not value:
+            fallback = config.get(f"{agent}_plan", "")
+            value = fallback
+    else:
+        value = config.get("agent_billing_days", {}).get(agent, 0)
+        if not value:
+            fallback = config.get(f"{agent}_billing_day", 0)
+            value = fallback if fallback else config.get("billing_day", 1)
+    print(f"{agent}.{key}: {value}")
+
+
+def set_value(key, value):
+    """Set a single config *key* to *value* (with validation)."""
+    set_values([(key, value)])

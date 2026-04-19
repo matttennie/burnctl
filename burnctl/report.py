@@ -312,7 +312,8 @@ def compute_period(billing_day, offset=0):
     tuple[datetime, datetime, datetime]
         ``(start, end, today_dt)`` as naive :class:`datetime` objects.
     """
-    today_dt = datetime.now()
+    now = datetime.now()
+    today_dt = datetime(now.year, now.month, now.day)
 
     if offset != 0:
         month = today_dt.month + offset
@@ -354,6 +355,7 @@ def compute_period(billing_day, offset=0):
 def aggregate_stats(
     collectors, config, ref_date=None, offset=0,
     start_override=None, end_override=None,
+    live=False,
 ):
     """Orchestrate data collection from all *collectors*.
 
@@ -370,6 +372,8 @@ def aggregate_stats(
     start_override, end_override : datetime | None
         Explicit date range (from ``--since`` / ``--until``).
         When set, *offset* is ignored.
+    live : bool
+        True if running in a high-frequency "live" loop.
 
     Returns
     -------
@@ -396,52 +400,29 @@ def aggregate_stats(
             today_dt = ref_date
         else:
             start, end, today_dt = compute_period(billing_day, offset)
-        stats = collector.get_stats(start, end, ref_date)
+        stats = collector.get_stats(start, end, ref_date, live=live)
         if stats is None:
             if collector.id == "openrouter":
                 continue
-            if collector.is_available():
-                # Agent detected but no activity in this period
-                total_days = (end - start).days
-                days_elapsed = min(
-                    (ref_date.date() - start.date()).days, total_days,
-                )
-                agents.append({
-                    "id": collector.id,
-                    "name": collector.name,
-                    "plan_name": plan_name,
-                    "plan_price": plan_price,
-                    "interval": interval,
-                    "period_start": start.strftime("%Y-%m-%d"),
-                    "period_end": end.strftime("%Y-%m-%d"),
-                    "days_elapsed": days_elapsed,
-                    "days_remaining": total_days - days_elapsed,
-                    "total_days": total_days,
-                    "pace_pct": 0.0,
-                    "projected_cost": 0.0,
-                    "messages": 0,
-                    "sessions": 0,
-                    "input_tokens": 0,
-                    "output_tokens": 0,
-                    "tool_calls": 0,
-                    "period_cost": 0.0,
-                    "alltime_cost": 0.0,
-                    "value_ratio": 0.0,
-                    "model_usage": {},
-                    "first_session": "",
-                    "total_messages": 0,
-                    "total_sessions": 0,
-                    "inactive": True,
-                })
-            continue
+            if not collector.is_available():
+                continue
+            stats = {}
 
         total_days = (end - start).days
         # Use date-only math to avoid sub-day drift between datetime.now() calls
-        days_elapsed = min((ref_date.date() - start.date()).days, total_days)
+        days_elapsed = min(
+            max((ref_date.date() - start.date()).days, 0),
+            total_days,
+        )
         days_remaining = total_days - days_elapsed
 
         period_cost = stats.get("period_cost", 0.0)
         alltime_cost = stats.get("alltime_cost", 0.0)
+        messages = stats.get("messages", 0)
+        sessions = stats["sessions"] if "sessions" in stats else 0
+        total_sessions = (
+            stats["total_sessions"] if "total_sessions" in stats else 0
+        )
 
         if plan_price > 0:
             pace_pct = period_cost / plan_price * 100
@@ -485,8 +466,8 @@ def aggregate_stats(
             "total_days": total_days,
             "pace_pct": round(pace_pct, 1),
             "projected_cost": round(projected_cost, 2),
-            "messages": stats.get("messages", 0),
-            "sessions": stats.get("sessions", 0),
+            "messages": messages,
+            "sessions": sessions,
             "input_tokens": stats.get("input_tokens"),
             "output_tokens": stats.get("output_tokens", 0),
             "tool_calls": stats.get("tool_calls", 0),
@@ -495,13 +476,16 @@ def aggregate_stats(
             "value_ratio": round(value_ratio, 1),
             "model_usage": stats.get("model_usage", {}),
             "first_session": first_session,
+            "last_active": stats.get("last_active", ""),
             "total_messages": stats.get("total_messages", 0),
-            "total_sessions": stats.get("total_sessions", 0),
+            "total_sessions": total_sessions,
             "activity_through": stats.get("activity_through", ""),
             "live_ledger": stats.get("live_ledger", False),
+            "period_cost_estimated": stats.get("period_cost_estimated", False),
+            "inactive": messages == 0 and sessions in (0, None),
         }
         agents.append(agent_data)
-        total_period_cost += period_cost
+        total_period_cost += period_cost or 0.0
 
     return {
         "agents": agents,
@@ -573,6 +557,8 @@ _TOP_REPORT_AGENT_IDS = {
     "huggingface",
     "anthropic",
     "openai",
+    "elevenlabs",
+    "inworld",
 }
 
 
@@ -795,7 +781,7 @@ def render_full(stats, simple=False, use_color=True, theme="gradient"):
     lines.append(box_title("PERIOD USAGE"))
     lines.append(box_empty())
     lines.append(
-        _row_bold("Sessions", [fmt(a["sessions"]) for a in agents]),
+        _row_bold("Sessions", [_fmt_optional_int(a["sessions"]) for a in agents]),
     )
     lines.append(
         _row_bold(
@@ -816,7 +802,12 @@ def render_full(stats, simple=False, use_color=True, theme="gradient"):
     lines.append(
         _row_highlight(
             "Est. API Cost",
-            [fmt_usd(a["period_cost"]) for a in agents],
+            [
+                ("~" + fmt_usd(a["period_cost"]))
+                if a.get("period_cost_estimated")
+                else fmt_usd(a["period_cost"])
+                for a in agents
+            ],
         ),
     )
     # System total (only if more than one agent)
@@ -824,13 +815,13 @@ def render_full(stats, simple=False, use_color=True, theme="gradient"):
         lines.append(box_empty())
         total_label = th.muted(f"{'System Total':<{label_w}}")
         total_val = th.bold(
-            th.success(fmt_usd(stats["total_period_cost"]).rjust(col_w)),
+            th.success(fmt_usd(_visible_period_cost(stats)).rjust(col_w)),
         )
         # Pad remaining columns with blanks
         blank_cols = ("  ").join(" " * col_w for _ in range(num_agents - 1))
         total_raw = (
             f"{'System Total':<{label_w}}"
-            + fmt_usd(stats["total_period_cost"]).rjust(col_w)
+            + fmt_usd(_visible_period_cost(stats)).rjust(col_w)
         )
         if blank_cols:
             total_content = f"{total_label}{total_val}  {blank_cols}"
@@ -860,6 +851,12 @@ def render_full(stats, simple=False, use_color=True, theme="gradient"):
         _row(
             "First Session",
             [a["first_session"] or "N/A" for a in agents],
+        ),
+    )
+    lines.append(
+        _row(
+            "Last Active",
+            [a["last_active"] or "N/A" for a in agents],
         ),
     )
 
@@ -914,8 +911,6 @@ def render_full(stats, simple=False, use_color=True, theme="gradient"):
     # ── MODEL BREAKDOWN ──
     agents_with_models = [a for a in all_agents if a.get("model_usage")]
     if agents_with_models:
-        from burnctl.pricing import get_agent_pricing
-
         lines.append(box_sep_light())
         lines.append(box_title("MODEL BREAKDOWN"))
         lines.append(box_empty())
@@ -931,9 +926,9 @@ def render_full(stats, simple=False, use_color=True, theme="gradient"):
                 ),
             )
             model_usage = a["model_usage"]
-            agent_pricing = get_agent_pricing(a.get("id", "")) or {}
-            total_out = sum(
-                u.get("outputTokens", 0) for u in model_usage.values()
+            total_tokens = sum(
+                u.get("inputTokens", 0) + u.get("outputTokens", 0)
+                for u in model_usage.values()
             )
 
             # Pre-pass: shorten all model names and find the longest
@@ -951,14 +946,10 @@ def render_full(stats, simple=False, use_color=True, theme="gradient"):
             metric_gap = 4
             post_name_gap = 3
             meta_gap = 2
-            # right_block is fixed-width across all rows; measure once.
-            # Price strings (fmt_rate_per_million) can be up to 8 chars,
-            # e.g. "$0.075/M", so budget 8 for each pricing column.
-            price_w = 8
             sample_right = (
                 f"Tot: {'':>6}"
-                f"{' ' * metric_gap}In: {'':>6} {'':>{price_w}}"
-                f"{' ' * metric_gap}Out:{'':>6} {'':>{price_w}}"
+                f"{' ' * metric_gap}In: {'':>6}"
+                f"{' ' * metric_gap}Out:{'':>6}"
             )
             available_w = model_line_w - 4
             min_bar_w = 4
@@ -983,8 +974,8 @@ def render_full(stats, simple=False, use_color=True, theme="gradient"):
                 cache_read = usage.get("cacheReadInputTokens", 0)
                 cache_read += usage.get("cachedTokens", 0)
                 total = inp + out
-                pct = int(out * 100 / total_out) if total_out else 0
-                pct_label = "<1%" if pct == 0 and out > 0 else "%d%%" % pct
+                pct = int(total * 100 / total_tokens) if total_tokens else 0
+                pct_label = "<1%" if pct == 0 and total > 0 else "%d%%" % pct
 
                 mini_filled = int(bar_w * pct / 100)
                 mini_empty = bar_w - mini_filled
@@ -994,22 +985,12 @@ def render_full(stats, simple=False, use_color=True, theme="gradient"):
                 fill_chars = _CH_FILL * mini_filled
                 empty_chars = _CH_EMPTY * mini_empty
 
-                # Look up pricing (try exact, then strip date suffix)
-                mp = agent_pricing.get(model)
-                if mp is None:
-                    stripped = re.sub(r'-\d{8}$', '', model)
-                    mp = agent_pricing.get(stripped, {})
-                in_rate = mp.get("input", 0)
-                out_rate = mp.get("output", 0)
-                in_p = fmt_rate_per_million(in_rate)
-                out_p = fmt_rate_per_million(out_rate)
-
                 in_s = fmt_short(inp)
                 out_s = fmt_short(out)
                 total_s = fmt_short(total)
                 total_cell = f"Tot: {total_s:>6}"
-                in_cell = f"In: {in_s:>6} {in_p:>{price_w}}"
-                out_cell = f"Out:{out_s:>6} {out_p:>{price_w}}"
+                in_cell = f"In: {in_s:>6}"
+                out_cell = f"Out:{out_s:>6}"
                 right_block = (
                     f"{total_cell}"
                     f"{' ' * metric_gap}{in_cell}"
@@ -1024,17 +1005,14 @@ def render_full(stats, simple=False, use_color=True, theme="gradient"):
                     f"{' ' * meta_gap}"
                     f"{right_block}"
                 )
-                # Pre-format pricing to fixed width before ANSI wrapping
-                in_p_pad = f"{in_p:>{price_w}}"
-                out_p_pad = f"{out_p:>{price_w}}"
                 detail_styled = (
                     f"    {th.muted(f'{short_disp:<{name_w}}')}"
                     f"{' ' * post_name_gap}{bar}"
                     f" {pct_label:>{pct_w}}"
                     f"{' ' * meta_gap}"
                     f"{th.muted('Tot:')} {total_s:>6}"
-                    f"{' ' * metric_gap}{th.muted('In:')} {in_s:>6} {th.muted(in_p_pad)}"
-                    f"{' ' * metric_gap}{th.muted('Out:')}{out_s:>6} {th.muted(out_p_pad)}"
+                    f"{' ' * metric_gap}{th.muted('In:')} {in_s:>6}"
+                    f"{' ' * metric_gap}{th.muted('Out:')}{out_s:>6}"
                 )
 
                 # Cache hit line (shown below model row when data exists)
@@ -1165,8 +1143,8 @@ def render_diff(current, previous):
         lines.append("")
 
     # System total
-    cur_total = current.get("total_period_cost", 0)
-    prev_total = previous.get("total_period_cost", 0)
+    cur_total = _visible_period_cost(current)
+    prev_total = _visible_period_cost(previous)
     lines.append(
         f"  System Total: {fmt_usd(prev_total)} -> "
         f"{fmt_usd(cur_total)}  "
@@ -1220,21 +1198,30 @@ def render_accessible(stats):
         lines.append(
             f"  Days remaining: {a['days_remaining']} of {a['total_days']}",
         )
-        lines.append(f"  Period sessions: {fmt(a['sessions'])}")
+        lines.append(f"  Period sessions: {_fmt_optional_int(a['sessions'])}")
         in_tok = a.get("input_tokens")
         lines.append(
             f"  Period input tokens: {'N/A' if in_tok is None else fmt(in_tok)}"
         )
         lines.append(f"  Period output tokens: {fmt(a['output_tokens'])}")
         lines.append(f"  Period tool calls: {fmt(a['tool_calls'])}")
-        lines.append(
-            f"  Period API-equivalent cost: {fmt_usd(a['period_cost'])}",
-        )
+        if a.get("period_cost_estimated"):
+            lines.append(
+                f"  Period API-equivalent cost: ~{fmt_usd(a['period_cost'])}"
+            )
+            lines.append(
+                "  Cost note: estimated from all-time Claude model ratios because period input/cache token totals are unavailable."
+            )
+        else:
+            lines.append(
+                f"  Period API-equivalent cost: {fmt_usd(a['period_cost'])}",
+            )
         lines.append(
             f"  All-time API value: {fmt_usd(a['alltime_cost'])}",
         )
         lines.append(f"  Value ratio: {a['value_ratio']:.1f}x")
         lines.append(f"  First session: {a['first_session']}")
+        lines.append(f"  Last active: {a['last_active']}")
         lines.append(
             f"  All-time messages: {_fmt_optional_int(a['total_messages'])}",
         )

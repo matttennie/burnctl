@@ -1,8 +1,4 @@
-"""Main CLI entry point for burnctl.
-
-Provides a unified dashboard for AI coding agent usage across
-Claude Code, Gemini CLI, and other supported agents.
-"""
+"""Main CLI entry point for burnctl."""
 
 import argparse
 import sys
@@ -11,7 +7,7 @@ from shlex import quote
 
 from burnctl import __version__
 from burnctl.collectors import ALL_COLLECTORS
-from burnctl.config import DEFAULTS, THEMES
+from burnctl.config import DEFAULTS, PUBLIC_GLOBAL_KEYS, THEMES
 from burnctl.openrouter_setup import (
     PROXY_HOST,
     PROXY_PORT,
@@ -116,6 +112,11 @@ def _build_parser():
         action="store_true",
         help="Plain text, screen-reader friendly output",
     )
+    fmt_group.add_argument(
+        "-L", "--top-mode",
+        action="store_true",
+        help="Enter live 'top' dashboard mode (auto-refreshing)",
+    )
     parser.set_defaults(compact=None, simple=None, color=None)
 
     # Billing
@@ -167,8 +168,13 @@ def _build_parser():
 
     # config
     cfg = sub.add_parser("config", help="View or set preferences")
-    cfg.add_argument("key", nargs="?", help="Config key to set")
-    cfg.add_argument("value", nargs="?", help="Value to set")
+    for c in ALL_COLLECTORS:
+        cfg.add_argument(
+            f"--{c.id}",
+            action="store_true",
+            help=f"Scope config changes to {c.name}",
+        )
+    cfg.add_argument("items", nargs="*", help="Config items")
 
     # upgrade
     upg = sub.add_parser(
@@ -297,25 +303,54 @@ def _merge_config(args, config):
 
 def _handle_config(args):
     """Handle the ``config`` subcommand."""
-    from burnctl.config import show, set_value
+    from burnctl.config import get_scoped_value, load, set_scoped_values, set_values, show
 
-    if args.key is None:
+    scoped = [c.id for c in ALL_COLLECTORS if getattr(args, c.id, False)]
+    if len(scoped) > 1:
+        print("Error: choose only one agent scope for config.", file=sys.stderr)
+        sys.exit(1)
+    scope = scoped[0] if scoped else None
+    items = list(args.items or [])
+
+    if not items:
+        if scope:
+            cfg = load()
+            plan = cfg.get("agent_plans", {}).get(scope)
+            if not plan:
+                plan = cfg.get(f"{scope}_plan", "")
+            billing_day = cfg.get("agent_billing_days", {}).get(scope, 0)
+            if not billing_day:
+                billing_day = cfg.get(f"{scope}_billing_day", 0) or cfg.get("billing_day", 1)
+            print(f"{scope}.billing_plan: {plan}")
+            print(f"{scope}.billing_day: {billing_day}")
+            return
         show()
-    elif args.value is None:
-        # Show a single key
-        from burnctl.config import load
+        return
+
+    if len(items) == 1:
+        if scope:
+            get_scoped_value(scope, items[0])
+            return
         cfg = load()
-        if args.key in cfg:
-            print(f"{args.key}: {cfg[args.key]}")
-        else:
-            valid = ", ".join(sorted(DEFAULTS.keys()))
-            print(
-                f"Unknown key '{args.key}'. Valid keys: {valid}",
-                file=sys.stderr,
-            )
-            sys.exit(1)
+        if items[0] in PUBLIC_GLOBAL_KEYS:
+            print(f"{items[0]}: {cfg[items[0]]}")
+            return
+        valid = ", ".join(PUBLIC_GLOBAL_KEYS)
+        print(
+            f"Unknown key '{items[0]}'. Valid keys: {valid}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    if len(items) % 2 != 0:
+        print("Error: config settings must be provided as key/value pairs.", file=sys.stderr)
+        sys.exit(1)
+
+    pairs = list(zip(items[::2], items[1::2]))
+    if scope:
+        set_scoped_values(scope, pairs)
     else:
-        set_value(args.key, args.value)
+        set_values(pairs)
 
 
 def _handle_upgrade(args, collectors):
@@ -513,20 +548,30 @@ def _render_report(args, config, collectors):
                 )
                 sys.exit(1)
 
+    is_top = getattr(args, "top_mode", False)
+
     # Period-over-period diff mode
     if args.period == "diff":
-        cur = aggregate_stats(collectors, config, offset=0)
-        prev = aggregate_stats(collectors, config, offset=-1)
+        cur = aggregate_stats(collectors, config, offset=0, live=is_top)
+        prev = aggregate_stats(collectors, config, offset=-1, live=is_top)
         return render_diff(cur, prev)
 
     offset = -1 if args.period == "last" else 0
-    agg = aggregate_stats(
-        collectors, config, offset=offset,
-        start_override=start_override,
-        end_override=end_override,
-    )
+    try:
+        agg = aggregate_stats(
+            collectors, config, offset=offset,
+            start_override=start_override,
+            end_override=end_override,
+            live=is_top,
+        )
+    except Exception as exc:
+        if is_top:
+            return f"Error gathering data: {exc}\n(Retrying...)"
+        raise
 
     if not agg["agents"]:
+        if is_top:
+            return "No data available for the selected period.\n(Waiting for activity...)"
         print("No data available for the selected period.", file=sys.stderr)
         sys.exit(1)
 
@@ -591,6 +636,25 @@ def main():
         print(message, file=sys.stderr)
 
     collectors = _resolve_collectors(args)
+
+    if getattr(args, "top_mode", False):
+        import time
+        try:
+            while True:
+                # Render to buffer BEFORE clearing the screen
+                output = _render_report(args, config, collectors)
+                footer = "\033[2m(Top mode — Press Ctrl+C to exit)\033[0m"
+
+                # Clear and print immediately
+                sys.stdout.write("\033[H\033[J")
+                sys.stdout.write(output + "\n" + footer)
+                sys.stdout.flush()
+
+                time.sleep(2)
+        except KeyboardInterrupt:
+            # Move cursor below the footer
+            print("\n")
+            return
 
     output = _render_report(args, config, collectors)
     print(output)

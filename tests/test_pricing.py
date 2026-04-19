@@ -6,10 +6,13 @@ Python 3.8 compatible -- no walrus operator, no match/case.
 """
 
 import json
+from datetime import datetime
 from unittest.mock import patch
 
 from burnctl.pricing import (
     get_agent_pricing,
+    get_agent_pricing_for_time,
+    get_model_pricing_for_time,
     GEMINI_PRICING,
     OPENAI_PRICING,
 )
@@ -96,10 +99,52 @@ class TestGetAgentPricingCodex:
         assert "mutated-model" not in OPENAI_PRICING
 
 
-class TestGetAgentPricingAider:
-    def test_returns_none(self):
-        result = get_agent_pricing("aider")
-        assert result is None
+class TestHistoricalPricing:
+    def test_records_snapshot_for_tracked_static_agents(self, tmp_path):
+        history_file = tmp_path / "pricing-history.json"
+        history_dir = tmp_path / "share"
+        import burnctl.pricing as pricing_mod
+        pricing_mod._OPENROUTER_PRICING_CACHE = None
+
+        with patch("burnctl.pricing._PRICING_HISTORY_FILE", str(history_file)), \
+             patch("burnctl.pricing._PRICING_HISTORY_DIR", str(history_dir)), \
+             patch("burnctl.pricing._snapshot_now_iso", return_value="2026-04-17T12:00:00+00:00"):
+            result = get_agent_pricing("gemini")
+
+        assert result == GEMINI_PRICING
+        payload = json.loads(history_file.read_text())
+        assert payload["gemini"][0]["effective_from"] == "2026-04-17T12:00:00+00:00"
+        assert payload["gemini"][0]["pricing"]["gemini-3-flash-preview"]["input"] == 0.50
+
+    def test_resolves_snapshot_effective_at_timestamp(self, tmp_path):
+        history_file = tmp_path / "pricing-history.json"
+        history_file.write_text(json.dumps({
+            "codex": [
+                {
+                    "effective_from": "2026-04-10T00:00:00+00:00",
+                    "pricing": {"gpt-5.4": {"input": 3.0, "output": 18.0, "cache_read": 0.3}},
+                },
+                {
+                    "effective_from": "2026-04-17T00:00:00+00:00",
+                    "pricing": {"gpt-5.4": {"input": 2.5, "output": 15.0, "cache_read": 0.25}},
+                },
+            ],
+        }))
+        history_dir = tmp_path / "share"
+
+        with patch("burnctl.pricing._PRICING_HISTORY_FILE", str(history_file)), \
+             patch("burnctl.pricing._PRICING_HISTORY_DIR", str(history_dir)):
+            before = get_model_pricing_for_time(
+                "codex", "gpt-5.4",
+                datetime.fromisoformat("2026-04-16T12:00:00+00:00"),
+            )
+            now = get_model_pricing_for_time(
+                "codex", "gpt-5.4",
+                datetime.fromisoformat("2026-04-17T12:00:00+00:00"),
+            )
+
+        assert before["input"] == 3.0
+        assert now["input"] == 2.5
 
 
 class TestGetAgentPricingLocal:
