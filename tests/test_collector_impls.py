@@ -2232,7 +2232,6 @@ class TestOpenRouterCollector:
     def test_unavailable_without_api_key(self, monkeypatch):
         monkeypatch.delenv("OPENROUTER_MGMT_API_KEY", raising=False)
         monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
-        monkeypatch.delenv("OPENROUTER_ORCHARD_API_KEY", raising=False)
         assert OpenRouterCollector().is_available() is False
 
     def test_stats_from_activity_and_credits(self, monkeypatch):

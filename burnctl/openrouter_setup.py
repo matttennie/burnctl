@@ -150,7 +150,6 @@ def _has_openrouter_key():
     for name in (
         "OPENROUTER_MGMT_API_KEY",
         "OPENROUTER_API_KEY",
-        "OPENROUTER_ORCHARD_API_KEY",
     ):
         if os.environ.get(name, "").strip():
             return True

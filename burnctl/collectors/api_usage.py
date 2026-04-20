@@ -1,7 +1,7 @@
 """Provider-backed usage collectors.
 
 OpenRouter is sourced directly from its account APIs. Other provider rows are
-discovered from Orchard's JSONL usage log when present.
+discovered from burnctl's provider usage log when present.
 """
 
 import json
@@ -15,15 +15,14 @@ from datetime import datetime, timezone
 from burnctl.collectors.base import BaseCollector
 from burnctl.openrouter_ledger import load_entries as load_openrouter_ledger
 
-USAGE_FILE = os.path.join(
-    os.path.expanduser("~"), ".config", "orchard", "usage.jsonl",
+_DEFAULT_USAGE_FILE = os.path.join(
+    os.path.expanduser("~"), ".config", "burnctl", "usage.jsonl",
 )
 
 _OPENROUTER_API_BASE = "https://openrouter.ai/api/v1"
 _OPENROUTER_KEY_ENV_VARS = (
     "OPENROUTER_MGMT_API_KEY",
     "OPENROUTER_API_KEY",
-    "OPENROUTER_ORCHARD_API_KEY",
 )
 
 # Skip files larger than 100 MB to avoid unbounded memory usage.
@@ -59,7 +58,7 @@ def _parse_ts(ts_str):
 
 
 def _parse_entry(line):
-    """Parse a single Orchard JSONL line into a validated dict."""
+    """Parse a single provider-usage JSONL line into a validated dict."""
     line = line.strip()
     if not line:
         return None
@@ -98,7 +97,9 @@ def _parse_entry(line):
 
 def _load_entries(filepath=None):
     """Load and parse all entries from the usage JSONL file."""
-    filepath = filepath or USAGE_FILE
+    filepath = filepath or os.environ.get("BURNCTL_USAGE_FILE", "").strip()
+    if not filepath:
+        filepath = _DEFAULT_USAGE_FILE
     if not os.path.isfile(filepath):
         return []
 
@@ -343,7 +344,7 @@ class OpenRouterCollector(BaseCollector):
 
 
 class ApiUsageCollector(BaseCollector):
-    """Collector for non-OpenRouter provider rows sourced from Orchard."""
+    """Collector for non-OpenRouter provider rows sourced from the usage log."""
 
     def __init__(self, provider_id, provider_name, usage_file=None,
                  upgrade_url=""):
@@ -457,7 +458,7 @@ def discover_collectors(usage_file=None):
     """Return provider collectors.
 
     OpenRouter is represented by a dedicated API-backed collector.
-    Other providers are discovered from Orchard's JSONL usage file.
+    Other providers are discovered from burnctl's usage JSONL file.
     """
     entries = _load_entries(usage_file)
     supported_providers = set(_PROVIDER_META)

@@ -104,14 +104,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- OpenRouter usage no longer relies on Orchard logs as the primary source
+- OpenRouter usage no longer relies on the generic provider usage log as the primary source
 - OpenRouter model pricing now comes from the provider models API
 - Report output now labels OpenRouter data provenance and freshness explicitly
 - When present, local OpenRouter ledger data is merged after the provider activity cutoff for current-day visibility
 
 ### Previously Added
 
-- API usage collector: auto-discovers providers (OpenRouter, HuggingFace, etc.) from `~/.config/orchard/usage.jsonl`
+- API usage collector: auto-discovers providers (OpenRouter, HuggingFace, etc.) from `~/.config/burnctl/usage.jsonl`
 - Each provider appears as its own agent in the report with per-model breakdown
 - `--no-activity` flag and `no_activity` config to hide the DAILY ACTIVITY section
 - N/A display for Pace and Value Ratio on pay-as-you-go providers

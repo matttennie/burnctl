@@ -12,7 +12,7 @@ Reads local session data plus provider APIs you already use, then shows tokens, 
 | Gemini CLI | `~/.gemini/` sessions |
 | Codex CLI | `~/.codex/sessions/*.jsonl` |
 | OpenRouter | OpenRouter activity API + local request ledger |
-| HuggingFace et al. | `~/.config/orchard/usage.jsonl` |
+| HuggingFace et al. | `~/.config/burnctl/usage.jsonl` |
 | Ollama | Detection only, $0 |
 | OpenCode | Stub — PRs welcome |
 
@@ -99,7 +99,7 @@ burnctl upgrade --all     # all of them
 
 ## Internals
 
-Collector pattern. Each agent implements `BaseCollector`. `discover_collectors()` auto-detects supported provider rows from the Orchard log.
+Collector pattern. Each agent implements `BaseCollector`. `discover_collectors()` auto-detects supported provider rows from the burnctl usage log.
 
 ```
 burnctl/
