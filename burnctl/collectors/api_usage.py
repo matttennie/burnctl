@@ -1,8 +1,7 @@
 """Provider-backed usage collectors.
 
-OpenRouter, ElevenLabs, and Inworld are sourced directly from their respective
-APIs when keys are present. Other provider rows continue to be sourced from
-Orchard's JSONL usage log when present.
+OpenRouter is sourced directly from its account APIs. Other provider rows are
+discovered from Orchard's JSONL usage log when present.
 """
 
 import json
@@ -27,11 +26,6 @@ _OPENROUTER_KEY_ENV_VARS = (
     "OPENROUTER_ORCHARD_API_KEY",
 )
 
-_ELEVENLABS_API_BASE = "https://api.elevenlabs.io/v1"
-_ELEVENLABS_KEY_ENV_VARS = ("ELEVENLABS_API_KEY", "XI_API_KEY")
-
-_INWORLD_KEY_ENV_VARS = ("INWORLD_API_KEY", "INWORLD_KEY")
-
 # Skip files larger than 100 MB to avoid unbounded memory usage.
 _MAX_FILE_BYTES = 100 * 1024 * 1024
 
@@ -48,14 +42,6 @@ _PROVIDER_META = {
     "openai": {
         "name": "OpenAI",
         "upgrade_url": "https://platform.openai.com/usage",
-    },
-    "elevenlabs": {
-        "name": "ElevenLabs",
-        "upgrade_url": "https://elevenlabs.io/app/subscription",
-    },
-    "inworld": {
-        "name": "Inworld AI",
-        "upgrade_url": "https://play.inworld.ai/",
     },
 }
 
@@ -356,185 +342,6 @@ class OpenRouterCollector(BaseCollector):
         }
 
 
-def _elevenlabs_api_key():
-    """Return the first configured ElevenLabs API key, if any."""
-    for name in _ELEVENLABS_KEY_ENV_VARS:
-        value = os.environ.get(name, "").strip()
-        if value:
-            return value
-    return ""
-
-
-def _elevenlabs_get_json(path, api_key, timeout=10):
-    """Fetch JSON from ElevenLabs API."""
-    req = urllib.request.Request(
-        _ELEVENLABS_API_BASE + path,
-        headers={
-            "xi-api-key": api_key,
-            "Accept": "application/json",
-            "User-Agent": "burnctl/0.1.0",
-        },
-    )
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        data = json.loads(resp.read().decode("utf-8"))
-        return data if isinstance(data, dict) else None
-
-
-class ElevenLabsCollector(BaseCollector):
-    """Collector for ElevenLabs character usage via API."""
-
-    @property
-    def name(self):
-        return "ElevenLabs"
-
-    @property
-    def id(self):
-        return "elevenlabs"
-
-    def is_available(self):
-        return bool(_elevenlabs_api_key())
-
-    def get_upgrade_url(self):
-        return _PROVIDER_META["elevenlabs"]["upgrade_url"]
-
-    def get_stats(self, start, end, ref_date, live=False):
-        api_key = _elevenlabs_api_key()
-        if not api_key:
-            return None
-
-        timeout = 2 if live else 10
-        try:
-            sub = _elevenlabs_get_json("/user/subscription", api_key, timeout=timeout)
-            hist_resp = _elevenlabs_get_json("/history", api_key, timeout=timeout)
-        except (urllib.error.URLError, urllib.error.HTTPError, ValueError, OSError):
-            return None
-
-        if not isinstance(sub, dict) or not isinstance(hist_resp, dict):
-            return None
-
-        history = hist_resp.get("history", [])
-        if not isinstance(history, list):
-            history = []
-
-        period_chars = 0
-        period_items = 0
-        period_model_usage = {}
-        first_ts = None
-        last_ts = None
-
-        start_ts = start.timestamp()
-        end_ts = end.timestamp()
-
-        for item in history:
-            if not isinstance(item, dict):
-                continue
-            ts = item.get("date_unix", 0)
-            if not ts:
-                continue
-
-            if first_ts is None or ts < first_ts:
-                first_ts = ts
-            if last_ts is None or ts > last_ts:
-                last_ts = ts
-
-            if start_ts <= ts < end_ts:
-                c_from = item.get("character_count_change_from", 0)
-                c_to = item.get("character_count_change_to", 0)
-                usage = max(c_to - c_from, 0)
-                period_chars += usage
-                period_items += 1
-
-                model = item.get("model_id", "eleven_multilingual_v2")
-                bucket = period_model_usage.setdefault(model, {"inputTokens": 0, "outputTokens": 0})
-                bucket["outputTokens"] += usage
-
-        alltime_used = sub.get("character_count", 0)
-        rate = 0.30 / 1000  # Default $0.30/1k chars
-        period_cost = period_chars * rate
-        alltime_cost = alltime_used * rate
-
-        return {
-            "messages": period_items,
-            "sessions": period_items,
-            "input_tokens": 0,
-            "output_tokens": period_chars,
-            "period_cost": period_cost,
-            "alltime_cost": alltime_cost,
-            "model_usage": period_model_usage,
-            "first_session": datetime.fromtimestamp(first_ts).strftime("%Y-%m-%d") if first_ts else "",
-            "last_active": datetime.fromtimestamp(last_ts).strftime("%Y-%m-%d") if last_ts else "",
-            "total_messages": len(history),
-            "total_sessions": len(history),
-            "tool_calls": 0,
-        }
-
-    def get_plan_info(self, config):
-        api_key = _elevenlabs_api_key()
-        configured_plan = config.get("agent_plans", {}).get("elevenlabs")
-        if not configured_plan:
-            configured_plan = config.get("elevenlabs_plan", "")
-        agent_bd = config.get("agent_billing_days", {}).get("elevenlabs")
-        if not agent_bd:
-            agent_bd = config.get("elevenlabs_billing_day", 0)
-        if not api_key:
-            info = super().get_plan_info(config)
-            if configured_plan:
-                info["plan_name"] = configured_plan
-            if agent_bd:
-                info["billing_day"] = agent_bd
-            return info
-        try:
-            sub = _elevenlabs_get_json("/user/subscription", api_key, timeout=2)
-            if sub:
-                tier = sub.get("tier", "pay-as-you-go")
-                return {
-                    "plan_name": configured_plan or tier,
-                    "plan_price": config.get("plan_price", 0),
-                    "billing_day": agent_bd if agent_bd else config.get("billing_day", 1),
-                    "interval": "mo",
-                }
-        except:
-            pass
-        info = super().get_plan_info(config)
-        if configured_plan:
-            info["plan_name"] = configured_plan
-        if agent_bd:
-            info["billing_day"] = agent_bd
-        return info
-
-
-def _inworld_api_key():
-    """Return the first configured Inworld API key, if any."""
-    for name in _INWORLD_KEY_ENV_VARS:
-        value = os.environ.get(name, "").strip()
-        if value:
-            return value
-    return ""
-
-
-class InworldCollector(BaseCollector):
-    """Collector for Inworld AI. Currently detection + log-backed only."""
-
-    @property
-    def name(self):
-        return "Inworld AI"
-
-    @property
-    def id(self):
-        return "inworld"
-
-    def is_available(self):
-        """Always available so it shows up in the dashboard for ROI tracking."""
-        return True
-
-    def get_stats(self, start, end, ref_date, live=False):
-        # We don't have a direct usage API yet, so we use the common log pass
-        # This allows it to appear even if only in logs.
-        # But we must satisfy the registry. ApiUsageCollector handles the log pass normally.
-        # Here we return None so the generic discover_collectors() logic takes over log data.
-        return None
-
-
 class ApiUsageCollector(BaseCollector):
     """Collector for non-OpenRouter provider rows sourced from Orchard."""
 
@@ -649,23 +456,25 @@ class ApiUsageCollector(BaseCollector):
 def discover_collectors(usage_file=None):
     """Return provider collectors.
 
-    OpenRouter and ElevenLabs are represented by dedicated API-backed collectors.
-    Other providers (including Inworld) are discovered from Orchard's JSONL usage file.
+    OpenRouter is represented by a dedicated API-backed collector.
+    Other providers are discovered from Orchard's JSONL usage file.
     """
     entries = _load_entries(usage_file)
+    supported_providers = set(_PROVIDER_META)
     providers = sorted(
-        set(e["provider"] for e in entries if e["provider"] not in ("openrouter", "elevenlabs"))
+        set(
+            e["provider"]
+            for e in entries
+            if e["provider"] in supported_providers
+        )
     )
 
     collectors: List[BaseCollector] = [
         OpenRouterCollector(),
-        ElevenLabsCollector(),
-        InworldCollector(),
     ]
 
     for pid in providers:
-        # Avoid double-adding providers that have dedicated collectors
-        if pid in ("openrouter", "elevenlabs", "inworld"):
+        if pid == "openrouter":
             continue
         meta = _PROVIDER_META.get(pid, {})
         display_name = meta.get("name", pid.title())

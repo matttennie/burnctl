@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "burnctl"
-version = "0.4.0"
+version = "0.3.2"
 description = "Local AI usage and cost tracker for Claude Code, Gemini CLI, Codex CLI, OpenRouter, and more"
 readme = "README.md"
 license = {text = "MIT"}

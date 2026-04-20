@@ -113,7 +113,7 @@ _VALIDATORS = {
 
 _SCOPED_AGENTS = (
     "claude", "gemini", "codex", "openrouter",
-    "elevenlabs", "inworld", "local", "opencode",
+    "local", "opencode",
 )
 
 _SCOPED_KEYS = ("billing_plan", "billing_day")

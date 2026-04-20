@@ -44,18 +44,6 @@ OPENAI_PRICING = {
     "codex-mini": {"input": 0.75, "output": 3.0, "cache_read": 0.025},
 }
 
-# ── ElevenLabs (per-million-character rates, USD) ────────────────
-
-ELEVENLABS_PRICING = {
-    "elevenlabs-tts": {"input": 0, "output": 300.0},  # $0.30 per 1k characters
-}
-
-# ── Inworld (per-million-token equivalent rates, USD) ────────────
-
-INWORLD_PRICING = {
-    "inworld-interaction": {"input": 5.0, "output": 10.0},
-}
-
 _OPENROUTER_MODELS_URL = "https://openrouter.ai/api/v1/models"
 _OPENROUTER_KEY_ENV_VARS = (
     "OPENROUTER_MGMT_API_KEY",
@@ -301,12 +289,6 @@ def get_agent_pricing(agent_id):
         result = dict(OPENAI_PRICING)
         _record_pricing_snapshot(agent_id, result)
         return result
-
-    if agent_id == "elevenlabs":
-        return dict(ELEVENLABS_PRICING)
-
-    if agent_id == "inworld":
-        return dict(INWORLD_PRICING)
 
     if agent_id == "openrouter":
         return _get_openrouter_pricing()

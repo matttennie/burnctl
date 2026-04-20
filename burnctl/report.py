@@ -557,8 +557,6 @@ _TOP_REPORT_AGENT_IDS = {
     "huggingface",
     "anthropic",
     "openai",
-    "elevenlabs",
-    "inworld",
 }
 
 

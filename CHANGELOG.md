@@ -7,25 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.4.0] - 2026-04-19
+## [0.3.2] - 2026-04-19
 
 ### Added
 
 - `burnctl --top-mode` (-L) auto-refreshing dashboard for real-time token burn monitoring
-- Direct API tracking for ElevenLabs: live character usage, history, and subscription tier detection
-- First-class support for Inworld AI in the main dashboard grid
 - "Last Active" field for all agents and providers to show the most recent activity date
 - SIGTERM handling for OpenRouter proxy to support clean shutdowns in background services
 - Timestamped pricing history for Gemini and Codex so historical totals use the price in effect at event time
 
 ### Changed
 
-- Bumped version to 0.4.0
+- Bumped version to 0.3.2
 - Optimized GeminiCollector and CodexCollector to skip stale session files in top-mode
 - Refactored OpenRouter proxy to stream SSE responses line-by-line (zero buffering OOM protection)
 - Increased OpenRouter API reliability with auto-adjusting timeouts in live mode
 - Standardized all collectors to return historical ROI data even when current period usage is zero
 - Removed Aider support and the repo-local Claude scaffolding files
+- Removed unsupported private-only provider integrations from the public branch
 - Billing periods now start at local midnight on the configured billing day
 - Report totals now consistently use only the agents shown in the main grid
 - Claude period cost is now explicitly labeled as estimated when derived from all-time model ratios

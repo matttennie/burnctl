@@ -99,7 +99,7 @@ burnctl upgrade --all     # all of them
 
 ## Internals
 
-Collector pattern. Each agent implements `BaseCollector`. `discover_collectors()` auto-detects API providers from the Orchard log.
+Collector pattern. Each agent implements `BaseCollector`. `discover_collectors()` auto-detects supported provider rows from the Orchard log.
 
 ```
 burnctl/

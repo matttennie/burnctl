@@ -540,8 +540,6 @@ class TestHandleConfig:
             gemini=False,
             codex=False,
             openrouter=False,
-            elevenlabs=False,
-            inworld=False,
             local=False,
             opencode=False,
         )
@@ -558,8 +556,6 @@ class TestHandleConfig:
             gemini=False,
             codex=False,
             openrouter=False,
-            elevenlabs=False,
-            inworld=False,
             local=False,
             opencode=False,
         )
@@ -578,8 +574,6 @@ class TestHandleConfig:
             gemini=False,
             codex=False,
             openrouter=False,
-            elevenlabs=False,
-            inworld=False,
             local=False,
             opencode=False,
         )
@@ -598,8 +592,6 @@ class TestHandleConfig:
             gemini=False,
             codex=False,
             openrouter=False,
-            elevenlabs=False,
-            inworld=False,
             local=False,
             opencode=False,
         )
@@ -620,8 +612,6 @@ class TestHandleConfig:
             gemini=False,
             codex=False,
             openrouter=False,
-            elevenlabs=False,
-            inworld=False,
             local=False,
             opencode=False,
         )
@@ -638,8 +628,6 @@ class TestHandleConfig:
             gemini=False,
             codex=True,
             openrouter=False,
-            elevenlabs=False,
-            inworld=False,
             local=False,
             opencode=False,
         )
