@@ -792,16 +792,10 @@ def render_full(stats, simple=False, use_color=True, theme="gradient"):
         raw_parts = []
         for a in agents:
             name = a["name"][:col_w].rjust(col_w)
-            if a.get("inactive"):
-                suffix = " (inactive)"
-                name_raw = (a["name"] + suffix)[:col_w].rjust(col_w)
-                styled_parts.append(th.muted(name_raw))
-                raw_parts.append(name_raw)
-            else:
-                styled_parts.append(
-                    th.agent_name(name, a.get("id", "")),
-                )
-                raw_parts.append(name)
+            styled_parts.append(
+                th.agent_name(name, a.get("id", "")),
+            )
+            raw_parts.append(name)
         cols = ("  ").join(styled_parts)
         raw = label_str + ("  ").join(raw_parts)
         return box_line(f"{label_str}{cols}", raw_len=len(raw))

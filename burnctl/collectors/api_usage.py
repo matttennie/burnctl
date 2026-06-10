@@ -14,6 +14,7 @@ from datetime import datetime
 
 from burnctl import __version__ as _BURNCTL_VERSION
 from burnctl.collectors.base import BaseCollector, load_with_stat_cache
+from burnctl.openrouter_ledger import HF_LEDGER_FILE
 from burnctl.openrouter_ledger import load_entries as load_openrouter_ledger
 
 _DEFAULT_USAGE_FILE = os.path.join(
@@ -81,15 +82,22 @@ _PROVIDER_META = {
 
 
 def _parse_ts(ts_str):
-    """Parse an ISO-8601 timestamp to a naive datetime (UTC assumed)."""
+    """Parse an ISO-8601 timestamp to naive LOCAL time.
+
+    Report windows start at local midnight, so timezone-aware values are
+    converted to local before dropping the offset; naive values are
+    assumed to already be local.
+    """
     if not ts_str or not isinstance(ts_str, str):
         return None
     try:
         cleaned = ts_str.replace("Z", "+00:00")
         dt = datetime.fromisoformat(cleaned)
-        return dt.replace(tzinfo=None)
     except (ValueError, TypeError):
         return None
+    if dt.tzinfo is not None:
+        dt = dt.astimezone().replace(tzinfo=None)
+    return dt
 
 
 def _parse_entry(line):
@@ -667,6 +675,24 @@ class ApiUsageCollector(BaseCollector):
         }
 
 
+def _hf_ledger_model_usage(start, end):
+    """Per-model token usage from the local HF router proxy ledger."""
+    usage = {}  # type: Dict[str, Dict[str, int]]
+    for entry in load_openrouter_ledger(HF_LEDGER_FILE):
+        if entry.get("provider") != "huggingface":
+            continue
+        ts = entry["ts"]
+        if not (start <= ts < end):
+            continue
+        bucket = usage.setdefault(
+            entry.get("model", "unknown"),
+            {"inputTokens": 0, "outputTokens": 0},
+        )
+        bucket["inputTokens"] += entry.get("input_tokens", 0)
+        bucket["outputTokens"] += entry.get("output_tokens", 0)
+    return usage
+
+
 class HuggingFaceCollector(ApiUsageCollector):
     """HuggingFace spend from the account billing API.
 
@@ -729,6 +755,13 @@ class HuggingFaceCollector(ApiUsageCollector):
                 "falling back to the local usage log."
             )
             return super().get_stats(start, end, ref_date, live=live)
+
+        # The billing API has no model-level data; when the local HF
+        # router proxy ledger has window entries, show real model names
+        # instead of per-provider rows (cost stays API-authoritative).
+        ledger_models = _hf_ledger_model_usage(start, end)
+        if ledger_models:
+            stats["model_usage"] = ledger_models
         return stats
 
 

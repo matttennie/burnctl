@@ -305,3 +305,60 @@ class _BytesReader:
 
     def close(self):
         pass
+
+
+class TestProxyProviderProfiles:
+    """The proxy is provider-generic: HuggingFace router traffic logs
+    ledger records stamped with provider=huggingface."""
+
+    def test_default_provider_is_openrouter(self):
+        assert proxy_mod._ProxyHandler.provider_id == "openrouter"
+
+    def test_huggingface_records_stamped_with_provider(self):
+        payload = json.dumps({
+            "id": "cmpl-1",
+            "model": "Qwen/Qwen3-32B",
+            "usage": {"prompt_tokens": 7, "completion_tokens": 5},
+        }).encode("utf-8")
+        fake = _FakeUpstream(
+            headers={"Content-Type": "application/json"}, body=payload,
+        )
+        records = []
+        with patch.object(
+            proxy_mod.urllib.request, "urlopen", return_value=fake,
+        ), patch.object(
+            proxy_mod, "append_entry",
+            lambda rec, filepath=None: records.append(rec),
+        ), patch.object(
+            proxy_mod._ProxyHandler, "provider_id", "huggingface",
+        ), patch.object(
+            proxy_mod._ProxyHandler, "upstream_base",
+            "https://router.huggingface.co/v1",
+        ):
+            server = ThreadingHTTPServer(
+                ("127.0.0.1", 0), proxy_mod._ProxyHandler,
+            )
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                conn = http.client.HTTPConnection(
+                    "127.0.0.1", server.server_address[1], timeout=3,
+                )
+                conn.request("POST", "/chat/completions", body=b"{}")
+                resp = conn.getresponse()
+                resp.read()
+                conn.close()
+            finally:
+                server.shutdown()
+                server.server_close()
+                thread.join(timeout=3)
+        assert len(records) == 1
+        assert records[0]["provider"] == "huggingface"
+        assert records[0]["model"] == "Qwen/Qwen3-32B"
+
+    def test_proxy_profiles_define_huggingface(self):
+        profiles = proxy_mod.PROXY_PROFILES
+        assert "openrouter" in profiles and "huggingface" in profiles
+        hf = profiles["huggingface"]
+        assert hf["upstream"] == "https://router.huggingface.co/v1"
+        assert hf["default_port"] != profiles["openrouter"]["default_port"]

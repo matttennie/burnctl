@@ -1583,15 +1583,17 @@ class TestInactiveAgents:
         assert active_agent["inactive"] is False
 
     @patch("os.get_terminal_size")
-    def test_render_full_inactive_shows_inactive_in_header(self, mock_term):
-        """Visible inactive agents should be labeled in the header."""
+    def test_render_full_never_shows_inactive_tag(self, mock_term):
+        """The '(inactive)' tag must not be rendered anywhere; the
+        inactive flag remains data-only (JSON / upgrade picker)."""
         mock_term.return_value = os.terminal_size((120, 40))
         inactive = _make_inactive_agent(id="openrouter", name="OpenRouter")
         stats = _make_stats(agents=[inactive])
 
         result = render_full(stats, use_color=False)
 
-        assert "(inactive)" in result
+        assert "(inactive)" not in result
+        assert "OpenRouter" in result
 
     @patch("os.get_terminal_size")
     def test_render_full_active_no_inactive_label(self, mock_term):
@@ -1612,7 +1614,7 @@ class TestInactiveAgents:
 
         result = render_full(stats, use_color=False)
 
-        assert "(inactive)" in result
+        assert "(inactive)" not in result
         assert "USAGE REPORT" in result
 
     @patch("os.get_terminal_size")

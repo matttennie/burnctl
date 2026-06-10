@@ -1,4 +1,8 @@
-"""OpenRouter proxy that logs per-request usage to the burnctl ledger."""
+"""Provider proxy that logs per-request usage to a local burnctl ledger.
+
+Supports OpenRouter and the HuggingFace Inference Providers router; both
+speak the OpenAI response format the usage parsers understand.
+"""
 
 import json
 import os
@@ -8,12 +12,29 @@ import urllib.error
 import urllib.request
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from typing import Dict
 
-from burnctl.openrouter_ledger import append_entry
+from burnctl.openrouter_ledger import HF_LEDGER_FILE, append_entry
 
 _DEFAULT_HOST = "127.0.0.1"
 _DEFAULT_PORT = 8765
 _UPSTREAM_BASE = "https://openrouter.ai/api/v1"
+
+PROXY_PROFILES: Dict[str, dict] = {
+    "openrouter": {
+        "upstream": "https://openrouter.ai/api/v1",
+        "default_port": 8765,
+        "ledger_env": "BURNCTL_OPENROUTER_LEDGER",
+        # Empty: the ledger module's default OpenRouter path is used.
+        "default_ledger": "",
+    },
+    "huggingface": {
+        "upstream": "https://router.huggingface.co/v1",
+        "default_port": 8766,
+        "ledger_env": "BURNCTL_HUGGINGFACE_LEDGER",
+        "default_ledger": HF_LEDGER_FILE,
+    },
+}
 _HOP_BY_HOP = {
     "connection",
     "keep-alive",
@@ -97,6 +118,7 @@ def _parse_sse_line(raw, current_model="unknown", current_id=""):
 class _ProxyHandler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
     upstream_base = _UPSTREAM_BASE
+    provider_id = "openrouter"
     ledger_path = None
 
     def do_GET(self):
@@ -172,7 +194,8 @@ class _ProxyHandler(BaseHTTPRequestHandler):
                     ledger_record = _parse_json_usage(obj)
 
                 if ledger_record is not None:
-                    ledger_record["source"] = "openrouter-proxy"
+                    ledger_record["provider"] = self.provider_id
+                    ledger_record["source"] = "burnctl-proxy"
                     append_entry(ledger_record, filepath=self.ledger_path)
         except urllib.error.HTTPError as err:
             payload = err.read()
@@ -193,11 +216,21 @@ class _ProxyHandler(BaseHTTPRequestHandler):
             self.send_header(key, value)
 
 
-def run_proxy(host=None, port=None, ledger_path=None):
+def run_proxy(host=None, port=None, ledger_path=None, provider="openrouter"):
+    profile = PROXY_PROFILES[provider]
     host = host or os.environ.get("BURNCTL_PROXY_HOST", _DEFAULT_HOST)
-    port = int(port or os.environ.get("BURNCTL_PROXY_PORT", _DEFAULT_PORT))
-    ledger_path = ledger_path or os.environ.get("BURNCTL_OPENROUTER_LEDGER", "")
+    port = int(
+        port
+        or os.environ.get("BURNCTL_PROXY_PORT", profile["default_port"]),
+    )
+    ledger_path = (
+        ledger_path
+        or os.environ.get(profile["ledger_env"], "")
+        or profile["default_ledger"]
+    )
     _ProxyHandler.ledger_path = ledger_path or None
+    _ProxyHandler.provider_id = provider
+    _ProxyHandler.upstream_base = profile["upstream"]
 
     server = ThreadingHTTPServer((host, port), _ProxyHandler)
 
@@ -208,7 +241,9 @@ def run_proxy(host=None, port=None, ledger_path=None):
 
     signal.signal(signal.SIGTERM, handle_sigterm)
 
-    print("burnctl OpenRouter proxy listening on http://%s:%s" % (host, port))
+    print(
+        "burnctl %s proxy listening on http://%s:%s" % (provider, host, port),
+    )
     if ledger_path:
         print("ledger:", ledger_path)
     else:

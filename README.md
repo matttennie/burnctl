@@ -12,7 +12,7 @@ Reads local session data plus provider APIs you already use, then shows tokens, 
 | Gemini CLI | `~/.gemini/` sessions |
 | Codex CLI | `~/.codex/sessions/*.jsonl` |
 | OpenRouter | OpenRouter activity API + local request ledger |
-| HuggingFace | HF billing API (`HF_TOKEN` with billing read permission) |
+| HuggingFace | HF billing API (`HF_TOKEN` with billing read permission) + local router proxy ledger for model names |
 | ElevenLabs | Subscription API (`ELEVENLABS_API_KEY`) — character quota |
 | Tavily | Usage API (`TAVILY_API_KEY`) — plan credits |
 | Inworld, Groq, Mistral, Brave, Mercury, Jina | `~/.config/burnctl/usage.jsonl` (no public usage APIs) |
@@ -79,6 +79,17 @@ burnctl proxy openrouter --doctor   # env safety audit
 ```
 
 Ledger: `~/.local/share/burnctl/openrouter-usage.jsonl`
+
+HuggingFace's billing API only reports per-provider usage; to see model
+names in the breakdown, route OpenAI-compatible HF router clients
+through the local proxy:
+
+```
+burnctl proxy huggingface               # run the proxy (port 8766)
+burnctl proxy huggingface --print-shell # emit HF_BASE_URL export
+```
+
+Ledger: `~/.local/share/burnctl/huggingface-usage.jsonl`
 
 ### Config
 

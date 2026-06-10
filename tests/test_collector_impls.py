@@ -1880,13 +1880,17 @@ from burnctl.collectors.api_usage import (
 class TestApiUsageParseTs:
     """Verify _parse_ts() handles various timestamp formats."""
 
-    def test_iso8601_with_z_suffix(self):
+    def test_iso8601_with_z_suffix_converts_to_local(self):
+        # Aware timestamps are converted to naive LOCAL time so they
+        # compare correctly against local-midnight window bounds.
         result = _parse_ts_api("2026-03-17T14:30:00.000Z")
         assert result is not None
-        assert result.year == 2026
-        assert result.month == 3
-        assert result.day == 17
-        assert result.hour == 14
+        from datetime import datetime as _dt
+        expected = (
+            _dt.fromisoformat("2026-03-17T14:30:00+00:00")
+            .astimezone().replace(tzinfo=None)
+        )
+        assert result == expected
         assert result.minute == 30
         assert result.tzinfo is None  # naive after stripping
 
@@ -2877,9 +2881,16 @@ class TestHuggingFaceCollector:
             },
         }
 
-    def _collector(self, tmp_path):
-        from burnctl.collectors.api_usage import HuggingFaceCollector
-        return HuggingFaceCollector(usage_file=str(tmp_path / "usage.jsonl"))
+    def _collector(self, tmp_path, monkeypatch=None):
+        from burnctl.collectors import api_usage as mod
+        if monkeypatch is not None:
+            # Isolate from any real proxy ledger on the host machine.
+            monkeypatch.setattr(
+                mod, "HF_LEDGER_FILE", str(tmp_path / "no-ledger.jsonl"),
+            )
+        return mod.HuggingFaceCollector(
+            usage_file=str(tmp_path / "usage.jsonl"),
+        )
 
     def _period(self):
         return (
@@ -2891,12 +2902,12 @@ class TestHuggingFaceCollector:
     def test_unavailable_without_key_or_log(self, tmp_path, monkeypatch):
         monkeypatch.delenv("HF_TOKEN", raising=False)
         monkeypatch.delenv("HUGGINGFACE_API_KEY", raising=False)
-        assert self._collector(tmp_path).is_available() is False
+        assert self._collector(tmp_path, monkeypatch).is_available() is False
 
     def test_available_with_env_key(self, tmp_path, monkeypatch):
         monkeypatch.delenv("HF_TOKEN", raising=False)
         monkeypatch.setenv("HUGGINGFACE_API_KEY", "hf_x")
-        assert self._collector(tmp_path).is_available() is True
+        assert self._collector(tmp_path, monkeypatch).is_available() is True
 
     def test_rolling_window_is_30_days(self, tmp_path):
         assert self._collector(tmp_path).rolling_window_days == 30
@@ -2914,7 +2925,7 @@ class TestHuggingFaceCollector:
 
         monkeypatch.setattr(mod, "_hf_get_json", fake_get)
         start, end, ref = self._period()
-        stats = self._collector(tmp_path).get_stats(start, end, ref)
+        stats = self._collector(tmp_path, monkeypatch).get_stats(start, end, ref)
 
         assert stats is not None
         # 1450981478 nano-usd inference + 1500000 micro-usd jobs + 25 cents
@@ -2965,7 +2976,7 @@ class TestHuggingFaceCollector:
 
         monkeypatch.setattr(mod, "_hf_get_json", lambda *a, **k: payload)
         start, end, ref = self._period()
-        stats = self._collector(tmp_path).get_stats(start, end, ref)
+        stats = self._collector(tmp_path, monkeypatch).get_stats(start, end, ref)
 
         assert stats is not None
         err = capsys.readouterr().err
@@ -2987,7 +2998,7 @@ class TestHuggingFaceCollector:
 
         monkeypatch.setattr(mod, "_hf_get_json", fake_get)
         start, end, ref = self._period()
-        stats = self._collector(tmp_path).get_stats(start, end, ref)
+        stats = self._collector(tmp_path, monkeypatch).get_stats(start, end, ref)
 
         assert tried == ["hf_dead", "hf_live"]
         assert stats is not None
@@ -3017,7 +3028,7 @@ class TestHuggingFaceCollector:
 
         monkeypatch.setattr(mod, "_hf_get_json", fake_get)
         start, end, ref = self._period()
-        stats = self._collector(tmp_path).get_stats(start, end, ref)
+        stats = self._collector(tmp_path, monkeypatch).get_stats(start, end, ref)
 
         assert stats is not None
         assert stats["period_cost"] == 0.5
@@ -3033,7 +3044,7 @@ class TestHuggingFaceCollector:
 
         monkeypatch.setattr(mod, "_hf_get_json", fake_get)
         start, end, ref = self._period()
-        stats = self._collector(tmp_path).get_stats(start, end, ref)
+        stats = self._collector(tmp_path, monkeypatch).get_stats(start, end, ref)
 
         # No usage log either -> no data, but never invented numbers.
         assert stats is None
@@ -3264,3 +3275,78 @@ class TestNewUsageLogProviders:
         ids = {c.id for c in collectors}
         for pid in ("groq", "mistral", "brave", "mercury", "jina"):
             assert pid in ids
+
+
+class TestHuggingFaceLedgerModels:
+    """Model names come from the local HF router proxy ledger; HF's
+    billing API only exposes per-provider data."""
+
+    def _payload(self):
+        return {
+            "usage": {
+                "Spaces": [],
+                "Endpoints": [],
+                "inferenceProviders": {
+                    "usedNanoUsd": 1450981478,
+                    "numRequests": 467,
+                    "providerDetails": [
+                        {"provider": "fireworks-ai", "numRequests": 38,
+                         "totalCostNanoUsd": 989683200},
+                    ],
+                },
+            },
+        }
+
+    def test_ledger_models_replace_provider_rows(self, tmp_path, monkeypatch):
+        from burnctl.collectors import api_usage as mod
+
+        monkeypatch.setenv("HF_TOKEN", "hf_x")
+        monkeypatch.delenv("HUGGINGFACE_API_KEY", raising=False)
+        monkeypatch.setattr(mod, "_hf_get_json", lambda *a, **k: self._payload())
+
+        ledger = tmp_path / "huggingface-usage.jsonl"
+        entries = [
+            {"ts": "2026-05-20T10:00:00Z", "provider": "huggingface",
+             "model": "Qwen/Qwen3-32B", "input_tokens": 100,
+             "output_tokens": 50, "cost": 0.01},
+            {"ts": "2026-05-21T10:00:00Z", "provider": "huggingface",
+             "model": "Qwen/Qwen3-32B", "input_tokens": 40,
+             "output_tokens": 10, "cost": 0.002},
+            # Out of window: must be excluded.
+            {"ts": "2026-04-01T10:00:00Z", "provider": "huggingface",
+             "model": "old/model", "input_tokens": 5, "output_tokens": 5},
+        ]
+        ledger.write_text(
+            "\n".join(json.dumps(e) for e in entries) + "\n", encoding="utf-8",
+        )
+        monkeypatch.setattr(mod, "HF_LEDGER_FILE", str(ledger))
+
+        from burnctl.collectors.api_usage import HuggingFaceCollector
+        collector = HuggingFaceCollector(usage_file=str(tmp_path / "u.jsonl"))
+        stats = collector.get_stats(
+            datetime(2026, 5, 11), datetime(2026, 6, 10), datetime(2026, 6, 9),
+        )
+
+        mu = stats["model_usage"]
+        assert mu["Qwen/Qwen3-32B"]["inputTokens"] == 140
+        assert mu["Qwen/Qwen3-32B"]["outputTokens"] == 60
+        assert "old/model" not in mu
+        assert not any(k.startswith("via ") for k in mu)
+        # The billing API remains authoritative for cost.
+        assert stats["period_cost"] == pytest.approx(1.450981478)
+
+    def test_no_ledger_keeps_provider_rows(self, tmp_path, monkeypatch):
+        from burnctl.collectors import api_usage as mod
+
+        monkeypatch.setenv("HF_TOKEN", "hf_x")
+        monkeypatch.setattr(mod, "_hf_get_json", lambda *a, **k: self._payload())
+        monkeypatch.setattr(
+            mod, "HF_LEDGER_FILE", str(tmp_path / "missing.jsonl"),
+        )
+
+        from burnctl.collectors.api_usage import HuggingFaceCollector
+        collector = HuggingFaceCollector(usage_file=str(tmp_path / "u.jsonl"))
+        stats = collector.get_stats(
+            datetime(2026, 5, 11), datetime(2026, 6, 10), datetime(2026, 6, 9),
+        )
+        assert "via fireworks-ai" in stats["model_usage"]

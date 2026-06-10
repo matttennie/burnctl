@@ -132,7 +132,12 @@ Example:
 Install or inspect one-time OpenRouter live-tracking integration.
 .TP
 .B burnctl proxy openrouter
-Run the local OpenRouter tracking proxy.
+Run the local OpenRouter tracking proxy (port 8765).
+.TP
+.B burnctl proxy huggingface
+Run the local HuggingFace router tracking proxy (port 8766). The HF
+billing API reports per-provider usage only; the proxy ledger supplies
+model names for the MODEL BREAKDOWN section.
 .SH FILES
 .TP
 .I ~/.config/burnctl/config.json

@@ -206,7 +206,7 @@ def _build_parser():
     )
     proxy.add_argument(
         "provider",
-        choices=["openrouter"],
+        choices=["openrouter", "huggingface"],
         help="Provider to proxy",
     )
     proxy.add_argument(
@@ -217,8 +217,8 @@ def _build_parser():
     proxy.add_argument(
         "--port",
         type=int,
-        default=8765,
-        help="Bind port (default: 8765)",
+        default=None,
+        help="Bind port (default: 8765 openrouter, 8766 huggingface)",
     )
     proxy.add_argument(
         "--ledger",
@@ -442,18 +442,29 @@ def _handle_upgrade(args, collectors):
 
 
 def _handle_proxy(args):
-    if args.provider != "openrouter":
-        print("Only OpenRouter proxying is supported right now.", file=sys.stderr)
-        sys.exit(1)
+    from burnctl.openrouter_proxy import PROXY_PROFILES, run_proxy
+
+    port = args.port or PROXY_PROFILES[args.provider]["default_port"]
     if args.print_shell:
-        print(_proxy_shell_exports(args.host, args.port))
+        if args.provider == "huggingface":
+            print(_hf_proxy_shell_exports(args.host, port))
+        else:
+            print(_proxy_shell_exports(args.host, port))
         return
     if args.doctor:
-        _proxy_doctor(args.host, args.port, args.ledger)
+        if args.provider != "openrouter":
+            print(
+                "--doctor currently inspects the OpenRouter setup only.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        _proxy_doctor(args.host, port, args.ledger)
         return
-    from burnctl.openrouter_proxy import run_proxy
 
-    run_proxy(host=args.host, port=args.port, ledger_path=args.ledger)
+    run_proxy(
+        host=args.host, port=port,
+        ledger_path=args.ledger, provider=args.provider,
+    )
 
 
 def _proxy_shell_exports(host, port):
@@ -466,6 +477,16 @@ def _proxy_shell_exports(host, port):
         "export OPENROUTER_BASE_URL=%s" % quote(proxy_url),
         "# Keep generic OpenAI-compatible clients direct unless you opt in explicitly.",
         "unset OPENAI_BASE_URL",
+    ])
+
+
+def _hf_proxy_shell_exports(host, port):
+    """Return shell exports for HuggingFace-router-aware clients."""
+    proxy_url = "http://%s:%s" % (host, port)
+    return "\n".join([
+        "# Route HuggingFace router (OpenAI-compatible) clients through the",
+        "# burnctl proxy so model-level usage lands in the local ledger.",
+        "export HF_BASE_URL=%s" % quote(proxy_url),
     ])
 
 

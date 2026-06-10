@@ -98,3 +98,49 @@ class TestLocalCollector:
 
     def test_upgrade_url(self):
         assert LocalCollector().get_upgrade_url() == "https://ollama.com/"
+
+
+class TestLedgerTimestampLocalization:
+    """Ledger timestamps are written in UTC; window bounds are local
+    midnight. Entries must compare in local time or evening usage lands
+    in 'tomorrow' and vanishes from the report until the next day."""
+
+    def test_parse_entry_converts_aware_ts_to_local_naive(self):
+        import json as _json
+        from datetime import datetime
+        from burnctl.openrouter_ledger import parse_entry
+
+        raw = "2026-06-10T03:04:31+00:00"
+        entry = parse_entry(_json.dumps({
+            "ts": raw, "provider": "huggingface", "model": "m",
+        }))
+        expected = (
+            datetime.fromisoformat(raw).astimezone().replace(tzinfo=None)
+        )
+        assert entry["ts"] == expected
+
+    def test_just_written_entry_falls_in_todays_window(self, tmp_path):
+        from datetime import datetime, timedelta, timezone as tz
+        from burnctl.openrouter_ledger import append_entry, load_entries
+
+        path = str(tmp_path / "ledger.jsonl")
+        append_entry({
+            "ts": datetime.now(tz.utc), "provider": "huggingface",
+            "model": "m", "input_tokens": 1, "output_tokens": 1,
+        }, filepath=path)
+
+        now = datetime.now()
+        today = datetime(now.year, now.month, now.day)
+        tomorrow = today + timedelta(days=1)
+        entry = load_entries(path)[0]
+        assert today <= entry["ts"] < tomorrow
+
+    def test_usage_log_ts_also_local(self):
+        from datetime import datetime
+        from burnctl.collectors.api_usage import _parse_ts
+
+        raw = "2026-06-10T03:04:31+00:00"
+        expected = (
+            datetime.fromisoformat(raw).astimezone().replace(tzinfo=None)
+        )
+        assert _parse_ts(raw) == expected

@@ -26,14 +26,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   usage-log providers (none expose a public usage API as of 2026-06)
 - Scoped config (`burnctl config --<agent> ...`) now accepts all
   registered provider ids
+- `burnctl proxy huggingface`: a local logging proxy for the HuggingFace
+  router (port 8766, ledger at
+  `~/.local/share/burnctl/huggingface-usage.jsonl`). The HF billing API
+  has no model-level data; when the ledger has entries in the window,
+  MODEL BREAKDOWN shows real model names with token counts instead of
+  per-provider rows
 - Rolling last-30-days reporting window for pay-as-you-go API providers
   (OpenRouter, HuggingFace, usage-log providers); billing-day periods now
   apply only to subscription agents. Days Left shows N/A for rolling
   windows, and providers with no data are omitted instead of rendering a
   misleading $0.00 row
 
+### Removed
+
+- The "(inactive)" header tag; the inactive flag remains available in
+  JSON output for tooling but is never rendered
+
 ### Fixed
 
+- Ledger and usage-log timestamps are converted to local time before
+  window comparisons; evening requests (UTC "tomorrow") no longer vanish
+  from the report until the next day
 - MODEL BREAKDOWN shows `In: N/A` instead of `In: 0` when input tokens are
   not tracked per period (Claude's stats cache is output-only); explicit
   zeros still render as 0

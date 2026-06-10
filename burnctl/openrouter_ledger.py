@@ -12,17 +12,28 @@ from datetime import datetime
 LEDGER_FILE = os.path.join(
     os.path.expanduser("~"), ".local", "share", "burnctl", "openrouter-usage.jsonl",
 )
+HF_LEDGER_FILE = os.path.join(
+    os.path.expanduser("~"), ".local", "share", "burnctl", "huggingface-usage.jsonl",
+)
 
 _MAX_LEDGER_BYTES = 100 * 1024 * 1024
 
 
 def _parse_ts(ts_str):
+    """Parse an ISO timestamp to naive LOCAL time.
+
+    Ledger records are written in UTC, but report windows start at local
+    midnight; comparing in UTC would push evening usage into "tomorrow".
+    """
     if not ts_str or not isinstance(ts_str, str):
         return None
     try:
-        return datetime.fromisoformat(ts_str.replace("Z", "+00:00")).replace(tzinfo=None)
+        dt = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
     except (TypeError, ValueError):
         return None
+    if dt.tzinfo is not None:
+        dt = dt.astimezone().replace(tzinfo=None)
+    return dt
 
 
 def parse_entry(line):

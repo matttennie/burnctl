@@ -215,7 +215,7 @@ class TestBuildParser:
         assert args.command == "proxy"
         assert args.provider == "openrouter"
         assert args.host == "127.0.0.1"
-        assert args.port == 8765
+        assert args.port is None  # resolved per provider (8765/8766)
 
     def test_proxy_print_shell_flag(self):
         parser = self._get_parser()
@@ -1852,3 +1852,21 @@ class TestHandleUpgradeDeepLink:
         mock_open.assert_called_once_with("https://example.com/upgrade")
         out = capsys.readouterr().out
         assert "Beta Agent" in out
+
+
+class TestProxyHuggingFace:
+    def test_parser_accepts_huggingface_provider(self):
+        from burnctl.cli import _build_parser
+        args = _build_parser().parse_args(["proxy", "huggingface"])
+        assert args.provider == "huggingface"
+
+    def test_print_shell_emits_hf_base_url(self, capsys):
+        from burnctl.cli import _handle_proxy
+        args = argparse.Namespace(
+            provider="huggingface", host="127.0.0.1", port=None,
+            ledger=None, print_shell=True, doctor=False,
+        )
+        _handle_proxy(args)
+        out = capsys.readouterr().out
+        assert "HF_BASE_URL" in out
+        assert "8766" in out
