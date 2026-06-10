@@ -45,6 +45,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The OpenRouter footer note now states plainly whether newer requests
+  are shown and how to enable live tracking, instead of describing UTC
+  aggregation internals
 - Ledger and usage-log timestamps are converted to local time before
   window comparisons; evening requests (UTC "tomorrow") no longer vanish
   from the report until the next day

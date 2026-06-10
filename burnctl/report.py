@@ -649,11 +649,12 @@ def _openrouter_activity_note(stats):
             break
     if uses_ledger:
         return (
-            "OpenRouter source: provider daily activity aggregates through %s UTC "
-            "plus local request ledger after that cutoff." % latest_day
+            "OpenRouter: provider aggregates through %s, plus the "
+            "local proxy ledger for newer requests." % latest_day
         )
     return (
-        "OpenRouter source: provider daily activity aggregates through %s UTC; current UTC day is not live."
+        "OpenRouter: provider aggregates end %s; newer requests are "
+        "not shown. Run 'burnctl setup openrouter' for live tracking."
         % latest_day
     )
 

@@ -934,8 +934,9 @@ class TestRenderFull:
         ])
         result = render_full(stats, use_color=False)
         assert (
-            "OpenRouter source: provider daily activity aggregates through 2026-03-29 UTC; current UTC day is not live."
-            in result
+            "OpenRouter: provider aggregates end 2026-03-29; newer "
+            "requests are not shown. Run 'burnctl setup openrouter' for "
+            "live tracking." in result
         )
 
     @patch("os.get_terminal_size")
@@ -954,9 +955,8 @@ class TestRenderFull:
         ])
         result = render_full(stats, use_color=False)
         assert (
-            "OpenRouter source: provider daily activity aggregates through "
-            "2026-03-29 UTC plus local request ledger after that cutoff."
-            in result
+            "OpenRouter: provider aggregates through 2026-03-29, plus the "
+            "local proxy ledger for newer requests." in result
         )
 
     @patch("os.get_terminal_size")
@@ -1295,8 +1295,9 @@ class TestRenderAccessible:
         ])
         result = render_accessible(stats)
         assert (
-            "OpenRouter source: provider daily activity aggregates through 2026-03-29 UTC; current UTC day is not live."
-            in result
+            "OpenRouter: provider aggregates end 2026-03-29; newer "
+            "requests are not shown. Run 'burnctl setup openrouter' for "
+            "live tracking." in result
         )
 
     def test_openrouter_activity_note_with_live_ledger(self):
@@ -1313,9 +1314,8 @@ class TestRenderAccessible:
         ])
         result = render_accessible(stats)
         assert (
-            "OpenRouter source: provider daily activity aggregates through "
-            "2026-03-29 UTC plus local request ledger after that cutoff."
-            in result
+            "OpenRouter: provider aggregates through 2026-03-29, plus the "
+            "local proxy ledger for newer requests." in result
         )
 
     def test_first_session_and_totals(self):
