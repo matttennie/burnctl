@@ -17,8 +17,11 @@ Claude Code, Gemini CLI, Codex CLI, and OpenRouter.
 .B \-v, \-\-version
 Show the installed burnctl version.
 .TP
-.B \-\-claude, \-\-gemini, \-\-codex, \-\-openrouter, \-\-local, \-\-opencode
-Limit the report to the named agent.
+.B \-\-claude, \-\-gemini, \-\-codex, \-\-openrouter, \-\-huggingface, \-\-local, \-\-opencode
+Limit the report to the named agent. Providers discovered from the burnctl
+usage log (Anthropic, OpenAI, Inworld) get matching flags when present.
+API providers such as OpenRouter and HuggingFace report a rolling
+last-30-days window instead of a billing-day period.
 .TP
 .B \-\-all
 Include all detected agents.

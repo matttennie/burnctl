@@ -11,7 +11,7 @@ import math
 import os
 import re
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta
 
 
 # ── Color helpers ──────────────────────────────────────────────────
@@ -349,6 +349,20 @@ def compute_period(billing_day, offset=0):
     return start, end, today_dt
 
 
+def compute_rolling_window(window_days, ref_date, offset=0):
+    """Compute a rolling last-N-days window ending today (exclusive end).
+
+    Used by pay-as-you-go API providers (OpenRouter, HuggingFace) where a
+    billing-day-anchored period is meaningless.  ``offset`` shifts the
+    window back in whole-window steps (``-1`` = the 30 days before this
+    window, etc.).
+    """
+    today_dt = datetime(ref_date.year, ref_date.month, ref_date.day)
+    end = today_dt + timedelta(days=1) + timedelta(days=window_days * offset)
+    start = end - timedelta(days=window_days)
+    return start, end, today_dt
+
+
 # ── Data aggregation ────────────────────────────────────────────────
 
 
@@ -394,27 +408,45 @@ def aggregate_stats(
         plan_price = plan_info["plan_price"]
         interval = plan_info["interval"]
 
+        rolling_window = getattr(collector, "rolling_window_days", 0)
+        if not isinstance(rolling_window, int):
+            rolling_window = 0
+
         if start_override is not None:
+            rolling_window = 0
             start = start_override
             end = end_override or ref_date
             today_dt = ref_date
+        elif rolling_window > 0:
+            start, end, today_dt = compute_rolling_window(
+                rolling_window, ref_date, offset,
+            )
         else:
             start, end, today_dt = compute_period(billing_day, offset)
         stats = collector.get_stats(start, end, ref_date, live=live)
         if stats is None:
-            if collector.id == "openrouter":
+            # API-backed rolling-window providers with no data get no row:
+            # "no access / no usage" must not render as a $0.00 agent.
+            if rolling_window > 0:
                 continue
             if not collector.is_available():
                 continue
             stats = {}
 
         total_days = (end - start).days
-        # Use date-only math to avoid sub-day drift between datetime.now() calls
-        days_elapsed = min(
-            max((ref_date.date() - start.date()).days, 0),
-            total_days,
-        )
-        days_remaining = total_days - days_elapsed
+        if rolling_window > 0:
+            # A rolling window is always fully elapsed; "days left" has no
+            # meaning for pay-as-you-go providers.
+            days_elapsed = total_days
+            days_remaining = 0
+        else:
+            # Use date-only math to avoid sub-day drift between
+            # datetime.now() calls
+            days_elapsed = min(
+                max((ref_date.date() - start.date()).days, 0),
+                total_days,
+            )
+            days_remaining = total_days - days_elapsed
 
         period_cost = stats.get("period_cost", 0.0)
         alltime_cost = stats.get("alltime_cost", 0.0)
@@ -466,6 +498,7 @@ def aggregate_stats(
             "total_messages": stats.get("total_messages", 0),
             "total_sessions": total_sessions,
             "activity_through": stats.get("activity_through", ""),
+            "rolling_window": rolling_window,
             "live_ledger": stats.get("live_ledger", False),
             "period_cost_estimated": stats.get("period_cost_estimated", False),
             "inactive": messages == 0 and sessions in (0, None),
@@ -756,7 +789,13 @@ def render_full(stats, simple=False, use_color=True, theme="gradient"):
     lines.append(_row("Period Start", [a["period_start"] for a in agents]))
     lines.append(_row("Period End", [a["period_end"] for a in agents]))
     lines.append(
-        _row("Days Left", [str(a["days_remaining"]) for a in agents]),
+        _row(
+            "Days Left",
+            [
+                "N/A" if a.get("rolling_window") else str(a["days_remaining"])
+                for a in agents
+            ],
+        ),
     )
     lines.append(box_empty())
 
@@ -1178,12 +1217,18 @@ def render_accessible(stats):
     for a in agents:
         lines.append(f"Agent: {a['name']}")
         lines.append(f"  Plan: {a['plan_name']}")
-        lines.append(
-            f"  Billing period: {a['period_start']} to {a['period_end']}",
-        )
-        lines.append(
-            f"  Days remaining: {a['days_remaining']} of {a['total_days']}",
-        )
+        if a.get("rolling_window"):
+            lines.append(
+                f"  Window: last {a['rolling_window']} days "
+                f"({a['period_start']} to {a['period_end']})"
+            )
+        else:
+            lines.append(
+                f"  Billing period: {a['period_start']} to {a['period_end']}",
+            )
+            lines.append(
+                f"  Days remaining: {a['days_remaining']} of {a['total_days']}",
+            )
         lines.append(f"  Period sessions: {_fmt_optional_int(a['sessions'])}")
         in_tok = a.get("input_tokens")
         lines.append(

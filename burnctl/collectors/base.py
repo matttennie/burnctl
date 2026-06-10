@@ -57,6 +57,10 @@ class BaseCollector(ABC):
     have sensible defaults for pay-as-you-go agents.
     """
 
+    # When > 0, the report uses a rolling last-N-days window instead of a
+    # billing-day-anchored period.  Pay-as-you-go API providers set this.
+    rolling_window_days = 0
+
     @property
     @abstractmethod
     def name(self):

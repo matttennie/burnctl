@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- HuggingFace collector backed by the account billing API
+  (`/api/settings/billing/usage-v2`); reads `HF_TOKEN` /
+  `HUGGINGFACE_API_KEY` (billing read permission required) and falls back
+  to local usage-log rows when the API is unavailable. Unrecognized API
+  payloads are never guessed at — they warn and fall back
+- Inworld registered as a usage-log provider (Inworld exposes no public
+  usage API as of 2026-06)
+- Rolling last-30-days reporting window for pay-as-you-go API providers
+  (OpenRouter, HuggingFace, usage-log providers); billing-day periods now
+  apply only to subscription agents. Days Left shows N/A for rolling
+  windows, and providers with no data are omitted instead of rendering a
+  misleading $0.00 row
+
 ### Fixed
 
 - `default_agents` config key is now honored: with no agent flags, the report

@@ -26,6 +26,12 @@ _OPENROUTER_KEY_ENV_VARS = (
     "OPENROUTER_API_KEY",
 )
 
+_HF_API_BASE = "https://huggingface.co"
+_HF_KEY_ENV_VARS = (
+    "HF_TOKEN",
+    "HUGGINGFACE_API_KEY",
+)
+
 # Skip files larger than 100 MB to avoid unbounded memory usage.
 _MAX_FILE_BYTES = 100 * 1024 * 1024
 
@@ -42,6 +48,12 @@ _PROVIDER_META = {
     "openai": {
         "name": "OpenAI",
         "upgrade_url": "https://platform.openai.com/usage",
+    },
+    # Inworld exposes no public usage API (verified 2026-06); usage rows
+    # logged to the burnctl usage file are the supported source.
+    "inworld": {
+        "name": "Inworld",
+        "upgrade_url": "https://platform.inworld.ai/billing",
     },
 }
 
@@ -184,8 +196,125 @@ def _warn_openrouter_api(message):
     print("Warning: OpenRouter collector: " + message, file=sys.stderr)
 
 
+def _hf_api_keys():
+    """Return all distinct configured HuggingFace tokens, in priority order."""
+    keys = []
+    for name in _HF_KEY_ENV_VARS:
+        value = os.environ.get(name, "").strip()
+        if value and value not in keys:
+            keys.append(value)
+    return keys
+
+
+def _hf_get_json(path, api_key, timeout=10):
+    """Fetch JSON from the HuggingFace Hub API."""
+    req = urllib.request.Request(
+        _HF_API_BASE + path,
+        headers={
+            "Authorization": "Bearer " + api_key,
+            "Accept": "application/json",
+            "User-Agent": "burnctl/" + _BURNCTL_VERSION,
+        },
+    )
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        data = json.loads(resp.read().decode("utf-8"))
+        return data
+
+
+def _warn_hf_api(message):
+    print("Warning: HuggingFace collector: " + message, file=sys.stderr)
+
+
+def _parse_hf_usage(payload):
+    """Parse a billing usage-v2 payload into burnctl stats.
+
+    Deliberately strict: only payload shapes that are unambiguously
+    understood produce numbers.  Anything else returns None so the caller
+    can fall back to the local usage log — never invented figures.
+    """
+    if isinstance(payload, dict):
+        items = None
+        for key in ("usage", "data", "items", "records"):
+            if isinstance(payload.get(key), list):
+                items = payload[key]
+                break
+    elif isinstance(payload, list):
+        items = payload
+    else:
+        items = None
+    if items is None:
+        return None
+
+    period_cost = 0.0
+    requests_total = 0
+    saw_requests = False
+    saw_cost = False
+    model_usage = {}  # type: Dict[str, Dict[str, int]]
+
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        cost = None
+        for key in ("totalCost", "cost", "amountUsd", "usd"):
+            if isinstance(item.get(key), (int, float)):
+                cost = float(item[key])
+                break
+        if cost is None:
+            continue
+        saw_cost = True
+        period_cost += cost
+
+        requests = None
+        for key in ("requests", "numRequests", "count"):
+            if isinstance(item.get(key), int):
+                requests = item[key]
+                break
+        if requests is not None:
+            saw_requests = True
+            requests_total += requests
+
+        model = ""
+        for key in ("model", "modelId", "model_id", "name"):
+            if isinstance(item.get(key), str) and item[key]:
+                model = item[key]
+                break
+        in_tok = item.get("inputTokens", 0)
+        out_tok = item.get("outputTokens", 0)
+        if model and (
+            isinstance(in_tok, int) and isinstance(out_tok, int)
+            and (in_tok or out_tok)
+        ):
+            bucket = model_usage.setdefault(
+                model, {"inputTokens": 0, "outputTokens": 0},
+            )
+            bucket["inputTokens"] += in_tok
+            bucket["outputTokens"] += out_tok
+
+    if not saw_cost:
+        return None
+
+    input_tokens = sum(u["inputTokens"] for u in model_usage.values())
+    output_tokens = sum(u["outputTokens"] for u in model_usage.values())
+    return {
+        "messages": requests_total if saw_requests else None,
+        "sessions": None,
+        "input_tokens": input_tokens if model_usage else None,
+        "output_tokens": output_tokens,
+        "period_cost": period_cost,
+        "alltime_cost": 0.0,
+        "model_usage": model_usage,
+        "first_session": "",
+        "last_active": "",
+        "total_messages": None,
+        "total_sessions": None,
+        "tool_calls": 0,
+    }
+
+
 class OpenRouterCollector(BaseCollector):
     """Collector backed by the OpenRouter account API."""
+
+    rolling_window_days = 30
 
     @property
     def name(self):
@@ -357,6 +486,8 @@ class OpenRouterCollector(BaseCollector):
 class ApiUsageCollector(BaseCollector):
     """Collector for non-OpenRouter provider rows sourced from the usage log."""
 
+    rolling_window_days = 30
+
     def __init__(self, provider_id, provider_name, usage_file=None,
                  upgrade_url=""):
         self._provider_id = provider_id
@@ -469,11 +600,75 @@ class ApiUsageCollector(BaseCollector):
         }
 
 
+class HuggingFaceCollector(ApiUsageCollector):
+    """HuggingFace spend from the account billing API.
+
+    Falls back to local usage-log rows when no token is configured, the
+    token lacks billing permission, or the API payload is unrecognized.
+    """
+
+    def __init__(self, usage_file=None):
+        super().__init__(
+            "huggingface",
+            "HuggingFace",
+            usage_file,
+            "https://huggingface.co/settings/billing",
+        )
+
+    def is_available(self):
+        return bool(_hf_api_keys()) or super().is_available()
+
+    def get_stats(self, start, end, ref_date, live=False):
+        keys = _hf_api_keys()
+        if not keys:
+            return super().get_stats(start, end, ref_date, live=live)
+
+        path = "/api/settings/billing/usage-v2?startDate=%d&endDate=%d" % (
+            int(start.timestamp() * 1000),
+            int(end.timestamp() * 1000),
+        )
+        timeout = 2 if live else 10
+        payload = None
+        denied = False
+        for key in keys:
+            try:
+                payload = _hf_get_json(path, key, timeout=timeout)
+                break
+            except urllib.error.HTTPError as err:
+                if err.code in (401, 403):
+                    denied = True
+                    continue
+                _warn_hf_api("billing request failed with HTTP %s." % err.code)
+                return super().get_stats(start, end, ref_date, live=live)
+            except (urllib.error.URLError, ValueError, OSError) as err:
+                _warn_hf_api("billing request failed: %s" % err)
+                return super().get_stats(start, end, ref_date, live=live)
+
+        if payload is None:
+            if denied:
+                _warn_hf_api(
+                    "billing access denied. Add the Billing read permission "
+                    "to your fine-grained token at "
+                    "https://huggingface.co/settings/tokens"
+                )
+            return super().get_stats(start, end, ref_date, live=live)
+
+        stats = _parse_hf_usage(payload)
+        if stats is None:
+            _warn_hf_api(
+                "unrecognized billing usage payload; "
+                "falling back to the local usage log."
+            )
+            return super().get_stats(start, end, ref_date, live=live)
+        return stats
+
+
 def discover_collectors(usage_file=None):
     """Return provider collectors.
 
-    OpenRouter is represented by a dedicated API-backed collector.
-    Other providers are discovered from burnctl's usage JSONL file.
+    OpenRouter and HuggingFace are represented by dedicated API-backed
+    collectors. Other providers are discovered from burnctl's usage JSONL
+    file.
     """
     entries = _load_entries(usage_file)
     supported_providers = set(_PROVIDER_META)
@@ -487,10 +682,11 @@ def discover_collectors(usage_file=None):
 
     collectors: List[BaseCollector] = [
         OpenRouterCollector(),
+        HuggingFaceCollector(usage_file),
     ]
 
     for pid in providers:
-        if pid == "openrouter":
+        if pid in ("openrouter", "huggingface"):
             continue
         meta = _PROVIDER_META.get(pid, {})
         display_name = meta.get("name", pid.title())

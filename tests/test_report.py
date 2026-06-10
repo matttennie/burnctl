@@ -449,6 +449,78 @@ class TestAggregateStats:
 
         assert result["agents"][0]["value_ratio"] == 0.0
 
+    def test_rolling_window_replaces_billing_period(self):
+        # API providers (OpenRouter, HuggingFace) report the last 30 days,
+        # not a billing-day-anchored period.
+        c = _make_collector(billing_day=25)
+        c.rolling_window_days = 30
+        ref = datetime(2026, 6, 9, 15, 30)
+        result = aggregate_stats([c], {}, ref_date=ref)
+
+        agent = result["agents"][0]
+        assert agent["period_start"] == "2026-05-11"
+        assert agent["period_end"] == "2026-06-10"  # exclusive end
+        assert agent["total_days"] == 30
+        assert agent["days_remaining"] == 0
+        assert agent["rolling_window"] == 30
+
+    def test_rolling_window_passes_bounds_to_collector(self):
+        c = _make_collector()
+        c.rolling_window_days = 30
+        ref = datetime(2026, 6, 9, 15, 30)
+        aggregate_stats([c], {}, ref_date=ref)
+
+        args, kwargs = c.get_stats.call_args
+        start, end = args[0], args[1]
+        assert start == datetime(2026, 5, 11)
+        assert end == datetime(2026, 6, 10)
+
+    def test_rolling_window_offset_shifts_back(self):
+        c = _make_collector()
+        c.rolling_window_days = 30
+        ref = datetime(2026, 6, 9)
+        aggregate_stats([c], {}, ref_date=ref, offset=-1)
+
+        args, _ = c.get_stats.call_args
+        assert args[0] == datetime(2026, 4, 11)
+        assert args[1] == datetime(2026, 5, 11)
+
+    def test_rolling_window_explicit_range_still_wins(self):
+        c = _make_collector()
+        c.rolling_window_days = 30
+        ref = datetime(2026, 6, 9)
+        result = aggregate_stats(
+            [c], {}, ref_date=ref,
+            start_override=datetime(2026, 1, 1),
+            end_override=datetime(2026, 2, 1),
+        )
+
+        agent = result["agents"][0]
+        assert agent["period_start"] == "2026-01-01"
+        assert agent["period_end"] == "2026-02-01"
+        assert agent["rolling_window"] == 0
+
+    def test_billing_period_collectors_unaffected(self):
+        c = _make_collector(billing_day=10)
+        ref = datetime(2026, 6, 9)
+        result = aggregate_stats([c], {}, ref_date=ref)
+
+        agent = result["agents"][0]
+        assert agent["period_start"] == "2026-05-10"
+        assert agent["period_end"] == "2026-06-10"
+        assert agent["rolling_window"] == 0
+
+    def test_rolling_provider_with_no_data_is_skipped(self):
+        # An API-backed provider that returns no stats (e.g. HuggingFace
+        # token without billing permission) must not render a $0.00 row —
+        # "no access" is not "nothing spent".
+        c = _make_collector(collector_id="huggingface")
+        c.rolling_window_days = 30
+        c.get_stats.return_value = None
+        c.is_available.return_value = True
+        result = aggregate_stats([c], {}, ref_date=datetime(2026, 6, 9))
+        assert result["agents"] == []
+
     def test_pace_pct_calculation(self):
         c = _make_collector(
             plan_price=100.0,
@@ -2224,3 +2296,25 @@ class TestDiffStr:
     def test_usd_large_number(self):
         result = _diff_str(10000.00, 0.00, is_usd=True)
         assert result == "+$10000.00"
+
+
+class TestRollingWindowRendering:
+    """Rolling-window agents show N/A for Days Left — there is no cycle."""
+
+    def test_render_full_days_left_na_for_rolling(self):
+        agent = _make_agent_data(rolling_window=30, days_remaining=0)
+        out = render_full(_make_stats(agents=[agent]), use_color=False)
+        days_line = [ln for ln in out.splitlines() if "Days Left" in ln][0]
+        assert "N/A" in days_line
+
+    def test_render_full_days_left_number_for_billing(self):
+        agent = _make_agent_data(days_remaining=16)
+        out = render_full(_make_stats(agents=[agent]), use_color=False)
+        days_line = [ln for ln in out.splitlines() if "Days Left" in ln][0]
+        assert "16" in days_line
+
+    def test_render_accessible_shows_window(self):
+        agent = _make_agent_data(rolling_window=30)
+        out = render_accessible(_make_stats(agents=[agent]))
+        assert "Window: last 30 days" in out
+        assert "Days remaining" not in out

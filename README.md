@@ -12,8 +12,12 @@ Reads local session data plus provider APIs you already use, then shows tokens, 
 | Gemini CLI | `~/.gemini/` sessions |
 | Codex CLI | `~/.codex/sessions/*.jsonl` |
 | OpenRouter | OpenRouter activity API + local request ledger |
-| HuggingFace et al. | `~/.config/burnctl/usage.jsonl` |
+| HuggingFace | HF billing API (`HF_TOKEN` with billing read permission) |
+| Inworld et al. | `~/.config/burnctl/usage.jsonl` |
 | OpenCode | Stub — PRs welcome |
+
+API providers (OpenRouter, HuggingFace, usage-log providers) report a
+rolling last-30-days window instead of a billing-day period.
 
 ## Install
 

@@ -2822,3 +2822,207 @@ class TestUsageFileEntriesCache:
         second = mod._load_entries(str(usage))
         assert len(first) == 1
         assert len(second) == 2
+
+
+# ---------------------------------------------------------------------------
+# HuggingFace collector (billing API backed)
+# ---------------------------------------------------------------------------
+
+
+class TestHuggingFaceCollector:
+    """HF spend comes from /api/settings/billing/usage-v2; the local
+    usage.jsonl log is the fallback when the API is unavailable."""
+
+    def _payload(self):
+        return {
+            "usage": [
+                {
+                    "model": "deepseek-ai/DeepSeek-V3",
+                    "provider": "groq",
+                    "requests": 5,
+                    "totalCost": 1.25,
+                },
+                {
+                    "model": "meta-llama/Llama-4",
+                    "provider": "hf-inference",
+                    "requests": 3,
+                    "totalCost": 0.75,
+                },
+            ],
+        }
+
+    def _collector(self, tmp_path):
+        from burnctl.collectors.api_usage import HuggingFaceCollector
+        return HuggingFaceCollector(usage_file=str(tmp_path / "usage.jsonl"))
+
+    def _period(self):
+        return (
+            datetime(2026, 5, 11),
+            datetime(2026, 6, 10),
+            datetime(2026, 6, 9),
+        )
+
+    def test_unavailable_without_key_or_log(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("HF_TOKEN", raising=False)
+        monkeypatch.delenv("HUGGINGFACE_API_KEY", raising=False)
+        assert self._collector(tmp_path).is_available() is False
+
+    def test_available_with_env_key(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("HF_TOKEN", raising=False)
+        monkeypatch.setenv("HUGGINGFACE_API_KEY", "hf_x")
+        assert self._collector(tmp_path).is_available() is True
+
+    def test_rolling_window_is_30_days(self, tmp_path):
+        assert self._collector(tmp_path).rolling_window_days == 30
+
+    def test_get_stats_happy_path(self, tmp_path, monkeypatch):
+        from burnctl.collectors import api_usage as mod
+
+        monkeypatch.setenv("HF_TOKEN", "hf_x")
+        monkeypatch.delenv("HUGGINGFACE_API_KEY", raising=False)
+        calls = []
+
+        def fake_get(path, api_key, timeout=10):
+            calls.append((path, api_key))
+            return self._payload()
+
+        monkeypatch.setattr(mod, "_hf_get_json", fake_get)
+        start, end, ref = self._period()
+        stats = self._collector(tmp_path).get_stats(start, end, ref)
+
+        assert stats is not None
+        assert stats["period_cost"] == 2.0
+        assert stats["messages"] == 8
+        path, key = calls[0]
+        assert path.startswith("/api/settings/billing/usage-v2?")
+        assert "startDate=" in path and "endDate=" in path
+        assert key == "hf_x"
+
+    def test_query_uses_epoch_milliseconds(self, tmp_path, monkeypatch):
+        from burnctl.collectors import api_usage as mod
+
+        monkeypatch.setenv("HF_TOKEN", "hf_x")
+        captured = {}
+
+        def fake_get(path, api_key, timeout=10):
+            captured["path"] = path
+            return self._payload()
+
+        monkeypatch.setattr(mod, "_hf_get_json", fake_get)
+        start, end, ref = self._period()
+        self._collector(tmp_path).get_stats(start, end, ref)
+
+        query = captured["path"].split("?", 1)[1]
+        params = dict(p.split("=") for p in query.split("&"))
+        assert int(params["startDate"]) == int(start.timestamp() * 1000)
+        assert int(params["endDate"]) == int(end.timestamp() * 1000)
+
+    def test_auth_failure_tries_next_key(self, tmp_path, monkeypatch):
+        import urllib.error
+        from burnctl.collectors import api_usage as mod
+
+        monkeypatch.setenv("HF_TOKEN", "hf_dead")
+        monkeypatch.setenv("HUGGINGFACE_API_KEY", "hf_live")
+        tried = []
+
+        def fake_get(path, api_key, timeout=10):
+            tried.append(api_key)
+            if api_key == "hf_dead":
+                raise urllib.error.HTTPError(path, 403, "Forbidden", {}, None)
+            return self._payload()
+
+        monkeypatch.setattr(mod, "_hf_get_json", fake_get)
+        start, end, ref = self._period()
+        stats = self._collector(tmp_path).get_stats(start, end, ref)
+
+        assert tried == ["hf_dead", "hf_live"]
+        assert stats is not None
+        assert stats["period_cost"] == 2.0
+
+    def test_all_keys_denied_falls_back_to_usage_log(
+        self, tmp_path, monkeypatch, capsys,
+    ):
+        import urllib.error
+        from burnctl.collectors import api_usage as mod
+
+        monkeypatch.setenv("HF_TOKEN", "hf_dead")
+        monkeypatch.delenv("HUGGINGFACE_API_KEY", raising=False)
+        usage = tmp_path / "usage.jsonl"
+        usage.write_text(json.dumps({
+            "ts": "2026-06-01T10:00:00Z",
+            "provider": "huggingface",
+            "model_id": "m1",
+            "input_tokens": 10,
+            "output_tokens": 5,
+            "cost": 0.5,
+        }) + "\n", encoding="utf-8")
+        getattr(mod, "_ENTRIES_CACHE", {}).clear()
+
+        def fake_get(path, api_key, timeout=10):
+            raise urllib.error.HTTPError(path, 403, "Forbidden", {}, None)
+
+        monkeypatch.setattr(mod, "_hf_get_json", fake_get)
+        start, end, ref = self._period()
+        stats = self._collector(tmp_path).get_stats(start, end, ref)
+
+        assert stats is not None
+        assert stats["period_cost"] == 0.5
+        assert "billing" in capsys.readouterr().err.lower()
+
+    def test_unrecognized_payload_falls_back(self, tmp_path, monkeypatch, capsys):
+        from burnctl.collectors import api_usage as mod
+
+        monkeypatch.setenv("HF_TOKEN", "hf_x")
+
+        def fake_get(path, api_key, timeout=10):
+            return {"somethingElse": True}
+
+        monkeypatch.setattr(mod, "_hf_get_json", fake_get)
+        start, end, ref = self._period()
+        stats = self._collector(tmp_path).get_stats(start, end, ref)
+
+        # No usage log either -> no data, but never invented numbers.
+        assert stats is None
+        assert "unrecognized" in capsys.readouterr().err.lower()
+
+
+class TestDiscoverCollectorsHuggingFace:
+    def test_registry_has_single_huggingface_collector(self, tmp_path):
+        from burnctl.collectors.api_usage import (
+            HuggingFaceCollector,
+            discover_collectors,
+        )
+
+        usage = tmp_path / "usage.jsonl"
+        usage.write_text(json.dumps({
+            "ts": "2026-06-01T10:00:00Z",
+            "provider": "huggingface",
+            "model_id": "m1",
+            "cost": 0.5,
+        }) + "\n", encoding="utf-8")
+
+        collectors = discover_collectors(str(usage))
+        hf = [c for c in collectors if c.id == "huggingface"]
+        assert len(hf) == 1
+        assert isinstance(hf[0], HuggingFaceCollector)
+
+
+class TestDiscoverCollectorsInworld:
+    def test_inworld_rows_surface_as_provider(self, tmp_path):
+        # Inworld has no public usage API (verified 2026-06); rows logged
+        # to the burnctl usage file are the supported source.
+        from burnctl.collectors.api_usage import discover_collectors
+
+        usage = tmp_path / "usage.jsonl"
+        usage.write_text(json.dumps({
+            "ts": "2026-06-01T10:00:00Z",
+            "provider": "inworld",
+            "model_id": "inworld-tts-1",
+            "cost": 0.12,
+        }) + "\n", encoding="utf-8")
+
+        collectors = discover_collectors(str(usage))
+        inworld = [c for c in collectors if c.id == "inworld"]
+        assert len(inworld) == 1
+        assert inworld[0].name == "Inworld"
+        assert "inworld.ai" in inworld[0].get_upgrade_url()
