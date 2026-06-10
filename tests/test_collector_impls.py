@@ -2834,21 +2834,47 @@ class TestHuggingFaceCollector:
     usage.jsonl log is the fallback when the API is unavailable."""
 
     def _payload(self):
+        # Real shape of /api/settings/billing/usage-v2 (captured 2026-06-09).
+        # Inference costs are NANO-usd, jobs are MICRO-usd, storage is
+        # CENTS; the query string takes epoch SECONDS (ms returns HTTP 500).
         return {
-            "usage": [
-                {
-                    "model": "deepseek-ai/DeepSeek-V3",
-                    "provider": "groq",
-                    "requests": 5,
-                    "totalCost": 1.25,
+            "usage": {
+                "Spaces": [],
+                "Endpoints": [],
+                "inferenceProviders": {
+                    "usedNanoUsd": 1450981478,
+                    "numRequests": 467,
+                    "providerDetails": [
+                        {
+                            "provider": "fireworks-ai",
+                            "numRequests": 38,
+                            "totalCostNanoUsd": 989683200,
+                            "totalDurationMs": 1790632.5,
+                        },
+                        {
+                            "provider": "novita",
+                            "numRequests": 233,
+                            "totalCostNanoUsd": 135848444,
+                            "totalDurationMs": 2689150.3,
+                        },
+                    ],
+                    "periodStart": "2026-05-11T04:00:00.000Z",
+                    "periodEnd": "2026-06-10T04:00:00.000Z",
+                    "includedNanoUsd": 2000000000,
                 },
-                {
-                    "model": "meta-llama/Llama-4",
-                    "provider": "hf-inference",
-                    "requests": 3,
-                    "totalCost": 0.75,
+                "jobs": {
+                    "totalMinutes": 12,
+                    "usedMicroUsd": 1500000,
+                    "hardwareFlavorBreakdown": [],
                 },
-            ],
+                "privateStorage": {
+                    "totalTB": 0,
+                    "includedTB": 0,
+                    "totalCents": 0,
+                    "amountDueCents": 25,
+                },
+                "zeroGpu": {"billedSeconds": 0},
+            },
         }
 
     def _collector(self, tmp_path):
@@ -2891,14 +2917,20 @@ class TestHuggingFaceCollector:
         stats = self._collector(tmp_path).get_stats(start, end, ref)
 
         assert stats is not None
-        assert stats["period_cost"] == 2.0
-        assert stats["messages"] == 8
+        # 1450981478 nano-usd inference + 1500000 micro-usd jobs + 25 cents
+        # storage = 1.450981478 + 1.50 + 0.25
+        assert stats["period_cost"] == pytest.approx(3.200981478)
+        assert stats["messages"] == 467
+        # The API reports no token counts; N/A is correct, not zero.
+        assert stats["input_tokens"] is None
+        assert stats["output_tokens"] is None
         path, key = calls[0]
         assert path.startswith("/api/settings/billing/usage-v2?")
         assert "startDate=" in path and "endDate=" in path
         assert key == "hf_x"
 
-    def test_query_uses_epoch_milliseconds(self, tmp_path, monkeypatch):
+    def test_query_uses_epoch_seconds(self, tmp_path, monkeypatch):
+        # Milliseconds make the endpoint return HTTP 500 (verified live).
         from burnctl.collectors import api_usage as mod
 
         monkeypatch.setenv("HF_TOKEN", "hf_x")
@@ -2914,8 +2946,25 @@ class TestHuggingFaceCollector:
 
         query = captured["path"].split("?", 1)[1]
         params = dict(p.split("=") for p in query.split("&"))
-        assert int(params["startDate"]) == int(start.timestamp() * 1000)
-        assert int(params["endDate"]) == int(end.timestamp() * 1000)
+        assert int(params["startDate"]) == int(start.timestamp())
+        assert int(params["endDate"]) == int(end.timestamp())
+
+    def test_nonempty_spaces_or_endpoints_warns(self, tmp_path, monkeypatch, capsys):
+        # Hardware categories with an unknown row shape must be called out,
+        # not silently omitted from the total.
+        from burnctl.collectors import api_usage as mod
+
+        monkeypatch.setenv("HF_TOKEN", "hf_x")
+        payload = self._payload()
+        payload["usage"]["Spaces"] = [{"someUnknownShape": True}]
+
+        monkeypatch.setattr(mod, "_hf_get_json", lambda *a, **k: payload)
+        start, end, ref = self._period()
+        stats = self._collector(tmp_path).get_stats(start, end, ref)
+
+        assert stats is not None
+        err = capsys.readouterr().err
+        assert "Spaces" in err and "not included" in err
 
     def test_auth_failure_tries_next_key(self, tmp_path, monkeypatch):
         import urllib.error
@@ -2937,7 +2986,7 @@ class TestHuggingFaceCollector:
 
         assert tried == ["hf_dead", "hf_live"]
         assert stats is not None
-        assert stats["period_cost"] == 2.0
+        assert stats["period_cost"] == pytest.approx(3.200981478)
 
     def test_all_keys_denied_falls_back_to_usage_log(
         self, tmp_path, monkeypatch, capsys,

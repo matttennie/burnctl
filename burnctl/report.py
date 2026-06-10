@@ -718,8 +718,14 @@ def render_full(stats, simple=False, use_color=True, theme="gradient"):
 
     # ── Row helpers for multi-column layout ──
 
+    def _clip(values):
+        """Truncate cell values to the column width so long values
+        (e.g. 'pay-as-you-go' in a narrow layout) cannot break the box."""
+        return [v[:col_w] for v in values]
+
     def _row(label, values):
         """Render a label + per-agent values row."""
+        values = _clip(values)
         label_str = th.muted(f"{label:<{label_w}}")
         cols = ("  ").join(v.rjust(col_w) for v in values)
         raw = f"{label:<{label_w}}" + ("  ").join(
@@ -729,6 +735,7 @@ def render_full(stats, simple=False, use_color=True, theme="gradient"):
 
     def _row_bold(label, values):
         """Row with bold values."""
+        values = _clip(values)
         label_str = th.muted(f"{label:<{label_w}}")
         cols = ("  ").join(th.bold(v.rjust(col_w)) for v in values)
         raw = f"{label:<{label_w}}" + ("  ").join(
@@ -738,6 +745,7 @@ def render_full(stats, simple=False, use_color=True, theme="gradient"):
 
     def _row_highlight(label, values):
         """Row with success-colored values."""
+        values = _clip(values)
         label_str = th.muted(f"{label:<{label_w}}")
         cols = ("  ").join(
             th.bold(th.success(v.rjust(col_w))) for v in values
@@ -819,7 +827,7 @@ def render_full(stats, simple=False, use_color=True, theme="gradient"):
     lines.append(
         _row_bold(
             "Output Tokens",
-            [fmt(a["output_tokens"]) for a in agents],
+            [_fmt_optional_int(a["output_tokens"]) for a in agents],
         ),
     )
     lines.append(
@@ -1234,7 +1242,10 @@ def render_accessible(stats):
         lines.append(
             f"  Period input tokens: {'N/A' if in_tok is None else fmt(in_tok)}"
         )
-        lines.append(f"  Period output tokens: {fmt(a['output_tokens'])}")
+        lines.append(
+            f"  Period output tokens: "
+            f"{_fmt_optional_int(a['output_tokens'])}"
+        )
         lines.append(f"  Period tool calls: {fmt(a['tool_calls'])}")
         if a.get("period_cost_estimated"):
             lines.append(

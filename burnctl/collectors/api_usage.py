@@ -228,81 +228,61 @@ def _warn_hf_api(message):
 def _parse_hf_usage(payload):
     """Parse a billing usage-v2 payload into burnctl stats.
 
-    Deliberately strict: only payload shapes that are unambiguously
-    understood produce numbers.  Anything else returns None so the caller
-    can fall back to the local usage log — never invented figures.
+    Schema captured live on 2026-06-09. Mind the units: inference costs
+    are NANO-usd, jobs are MICRO-usd, private storage is CENTS. The API
+    reports request counts per provider but no token counts. Anything
+    unrecognized returns None so the caller falls back to the local usage
+    log — never invented figures.
     """
-    if isinstance(payload, dict):
-        items = None
-        for key in ("usage", "data", "items", "records"):
-            if isinstance(payload.get(key), list):
-                items = payload[key]
-                break
-    elif isinstance(payload, list):
-        items = payload
-    else:
-        items = None
-    if items is None:
+    if not isinstance(payload, dict):
+        return None
+    usage = payload.get("usage")
+    if not isinstance(usage, dict):
+        return None
+    inference = usage.get("inferenceProviders")
+    if not isinstance(inference, dict):
+        return None
+    used_nano = inference.get("usedNanoUsd")
+    if not isinstance(used_nano, (int, float)):
         return None
 
-    period_cost = 0.0
-    requests_total = 0
-    saw_requests = False
-    saw_cost = False
-    model_usage = {}  # type: Dict[str, Dict[str, int]]
+    period_cost = used_nano / 1_000_000_000.0
 
-    for item in items:
-        if not isinstance(item, dict):
-            continue
-        cost = None
-        for key in ("totalCost", "cost", "amountUsd", "usd"):
-            if isinstance(item.get(key), (int, float)):
-                cost = float(item[key])
-                break
-        if cost is None:
-            continue
-        saw_cost = True
-        period_cost += cost
+    messages = inference.get("numRequests")
+    if not isinstance(messages, int):
+        messages = None
 
-        requests = None
-        for key in ("requests", "numRequests", "count"):
-            if isinstance(item.get(key), int):
-                requests = item[key]
-                break
-        if requests is not None:
-            saw_requests = True
-            requests_total += requests
+    jobs = usage.get("jobs")
+    if isinstance(jobs, dict) and isinstance(
+        jobs.get("usedMicroUsd"), (int, float),
+    ):
+        period_cost += jobs["usedMicroUsd"] / 1_000_000.0
 
-        model = ""
-        for key in ("model", "modelId", "model_id", "name"):
-            if isinstance(item.get(key), str) and item[key]:
-                model = item[key]
-                break
-        in_tok = item.get("inputTokens", 0)
-        out_tok = item.get("outputTokens", 0)
-        if model and (
-            isinstance(in_tok, int) and isinstance(out_tok, int)
-            and (in_tok or out_tok)
-        ):
-            bucket = model_usage.setdefault(
-                model, {"inputTokens": 0, "outputTokens": 0},
-            )
-            bucket["inputTokens"] += in_tok
-            bucket["outputTokens"] += out_tok
+    storage = usage.get("privateStorage")
+    if isinstance(storage, dict) and isinstance(
+        storage.get("amountDueCents"), (int, float),
+    ):
+        period_cost += storage["amountDueCents"] / 100.0
 
-    if not saw_cost:
-        return None
+    skipped = [
+        key for key in ("Spaces", "Endpoints")
+        if isinstance(usage.get(key), list) and usage.get(key)
+    ]
+    if skipped:
+        _warn_hf_api(
+            "%s usage present but not included in the total "
+            "(unsupported categories)." % " and ".join(skipped)
+        )
 
-    input_tokens = sum(u["inputTokens"] for u in model_usage.values())
-    output_tokens = sum(u["outputTokens"] for u in model_usage.values())
     return {
-        "messages": requests_total if saw_requests else None,
+        "messages": messages,
         "sessions": None,
-        "input_tokens": input_tokens if model_usage else None,
-        "output_tokens": output_tokens,
+        # The billing API reports no token counts; N/A is correct, not 0.
+        "input_tokens": None,
+        "output_tokens": None,
         "period_cost": period_cost,
         "alltime_cost": 0.0,
-        "model_usage": model_usage,
+        "model_usage": {},
         "first_session": "",
         "last_active": "",
         "total_messages": None,
@@ -623,9 +603,11 @@ class HuggingFaceCollector(ApiUsageCollector):
         if not keys:
             return super().get_stats(start, end, ref_date, live=live)
 
+        # Epoch SECONDS: millisecond timestamps make the endpoint return
+        # HTTP 500 (verified live 2026-06-09).
         path = "/api/settings/billing/usage-v2?startDate=%d&endDate=%d" % (
-            int(start.timestamp() * 1000),
-            int(end.timestamp() * 1000),
+            int(start.timestamp()),
+            int(end.timestamp()),
         )
         timeout = 2 if live else 10
         payload = None

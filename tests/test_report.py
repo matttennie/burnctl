@@ -2318,3 +2318,37 @@ class TestRollingWindowRendering:
         out = render_accessible(_make_stats(agents=[agent]))
         assert "Window: last 30 days" in out
         assert "Days remaining" not in out
+
+
+class TestOptionalOutputTokens:
+    """Providers like HuggingFace report no token counts at all —
+    output tokens must render N/A, never a fabricated 0."""
+
+    def test_render_full_output_tokens_none_is_na(self):
+        agent = _make_agent_data(output_tokens=None)
+        out = render_full(_make_stats(agents=[agent]), use_color=False)
+        line = [ln for ln in out.splitlines() if "Output Tokens" in ln][0]
+        assert "N/A" in line
+
+    def test_render_accessible_output_tokens_none_is_na(self):
+        agent = _make_agent_data(output_tokens=None)
+        out = render_accessible(_make_stats(agents=[agent]))
+        assert "Period output tokens: N/A" in out
+
+
+class TestColumnOverflow:
+    """Cell values longer than the column width must not break the box."""
+
+    def test_long_plan_name_keeps_box_aligned(self):
+        agents = [
+            _make_agent_data(id=f"a{i}", plan_name="pay-as-you-go")
+            for i in range(5)
+        ]
+        with patch("burnctl.report.os.get_terminal_size", side_effect=OSError):
+            out = render_full(_make_stats(agents=agents), use_color=False)
+        box_lines = [
+            ln for ln in out.splitlines()
+            if ln and ln[0] in "╔║╚╟"
+        ]
+        widths = {len(ln) for ln in box_lines}
+        assert len(widths) == 1, f"misaligned box widths: {sorted(widths)}"

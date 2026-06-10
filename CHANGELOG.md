@@ -24,6 +24,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Cell values longer than a column (e.g. `pay-as-you-go` in narrow
+  multi-agent layouts) no longer push the box border out of alignment
 - `default_agents` config key is now honored: with no agent flags, the report
   is limited to the configured agents (explicit flags and `--all` still
   override). It was documented and persisted but never read
