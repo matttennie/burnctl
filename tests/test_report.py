@@ -2400,3 +2400,64 @@ class TestCollectorPeriodHooks:
         c.is_available.return_value = True
         result = aggregate_stats([c], {}, ref_date=datetime(2026, 6, 9))
         assert result["agents"] == []
+
+
+class TestModelBreakdownAccuracy:
+    """Token-less data must render honestly: In: N/A when input tokens are
+    not tracked, and request/cost rows for providers that report no tokens."""
+
+    def test_missing_input_tokens_renders_na_not_zero(self):
+        # Claude's stats cache tracks per-period output tokens only.
+        agent = _make_agent_data(model_usage={
+            "claude-opus-4-8": {"outputTokens": 2_200_000},
+        })
+        out = render_full(_make_stats(agents=[agent]), use_color=False)
+        row = [ln for ln in out.splitlines() if "opus-4-8" in ln][0]
+        assert "In:    N/A" in row or "In: N/A" in row.replace("   ", " ")
+        assert "In:      0" not in row
+
+    def test_explicit_zero_input_tokens_still_shows_zero(self):
+        agent = _make_agent_data(model_usage={
+            "some-model": {"inputTokens": 0, "outputTokens": 500},
+        })
+        out = render_full(_make_stats(agents=[agent]), use_color=False)
+        row = [ln for ln in out.splitlines() if "some-model" in ln][0]
+        assert "N/A" not in row
+
+    def test_cost_buckets_render_requests_and_cost(self):
+        # HuggingFace reports per-provider requests + cost, no tokens.
+        agent = _make_agent_data(
+            id="huggingface", name="HuggingFace",
+            model_usage={
+                "via fireworks-ai": {"requests": 38, "cost": 0.99},
+                "via novita": {"requests": 233, "cost": 0.14},
+            },
+        )
+        out = render_full(_make_stats(agents=[agent]), use_color=False)
+        fw = [ln for ln in out.splitlines() if "fireworks-ai" in ln][0]
+        assert "Req:" in fw and "$0.99" in fw
+        nv = [ln for ln in out.splitlines() if "novita" in ln][0]
+        assert "$0.14" in nv
+        # Cost share drives the percentage: 0.99 / 1.13 ≈ 87%
+        assert "87%" in fw
+
+    def test_tiny_cost_not_rendered_as_zero(self):
+        agent = _make_agent_data(
+            id="huggingface", name="HuggingFace",
+            model_usage={
+                "via scaleway": {"requests": 1, "cost": 0.0000476},
+                "via together": {"requests": 6, "cost": 0.25},
+            },
+        )
+        out = render_full(_make_stats(agents=[agent]), use_color=False)
+        row = [ln for ln in out.splitlines() if "scaleway" in ln][0]
+        assert "$0.00 " not in row + " "
+        assert "<$0.01" in row
+
+    def test_accessible_cost_buckets(self):
+        agent = _make_agent_data(
+            id="huggingface", name="HuggingFace",
+            model_usage={"via fireworks-ai": {"requests": 38, "cost": 0.99}},
+        )
+        out = render_accessible(_make_stats(agents=[agent]))
+        assert "via fireworks-ai: 38 requests, $0.99" in out

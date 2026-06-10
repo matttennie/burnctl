@@ -340,6 +340,27 @@ def _parse_hf_usage(payload):
             "(unsupported categories)." % " and ".join(skipped)
         )
 
+    # The API breaks usage down by routing provider (no model-level or
+    # token-level data exists); surface those rows with requests + cost.
+    model_usage = {}  # type: Dict[str, Dict]
+    details = inference.get("providerDetails")
+    if isinstance(details, list):
+        for item in details:
+            if not isinstance(item, dict):
+                continue
+            provider = item.get("provider")
+            if not isinstance(provider, str) or not provider:
+                continue
+            bucket = {}  # type: Dict
+            cost_nano = item.get("totalCostNanoUsd")
+            if isinstance(cost_nano, (int, float)):
+                bucket["cost"] = cost_nano / 1_000_000_000.0
+            requests = item.get("numRequests")
+            if isinstance(requests, int):
+                bucket["requests"] = requests
+            if bucket:
+                model_usage["via " + provider] = bucket
+
     return {
         "messages": messages,
         "sessions": None,
@@ -348,7 +369,7 @@ def _parse_hf_usage(payload):
         "output_tokens": None,
         "period_cost": period_cost,
         "alltime_cost": 0.0,
-        "model_usage": {},
+        "model_usage": model_usage,
         "first_session": "",
         "last_active": "",
         "total_messages": None,

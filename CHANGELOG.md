@@ -34,6 +34,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- MODEL BREAKDOWN shows `In: N/A` instead of `In: 0` when input tokens are
+  not tracked per period (Claude's stats cache is output-only); explicit
+  zeros still render as 0
+- HuggingFace now appears in MODEL BREAKDOWN with its per-provider
+  breakdown (requests + cost share); the HF API exposes no model-level or
+  token-level data. Tiny nonzero costs render as `<$0.01`, never `$0.00`
 - Cell values longer than a column (e.g. `pay-as-you-go` in narrow
   multi-agent layouts) no longer push the box border out of alignment
 - `default_agents` config key is now honored: with no agent flags, the report

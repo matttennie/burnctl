@@ -2924,6 +2924,11 @@ class TestHuggingFaceCollector:
         # The API reports no token counts; N/A is correct, not zero.
         assert stats["input_tokens"] is None
         assert stats["output_tokens"] is None
+        # Provider breakdown surfaces as request/cost rows.
+        fw = stats["model_usage"]["via fireworks-ai"]
+        assert fw["requests"] == 38
+        assert fw["cost"] == pytest.approx(0.9896832)
+        assert stats["model_usage"]["via novita"]["requests"] == 233
         path, key = calls[0]
         assert path.startswith("/api/settings/billing/usage-v2?")
         assert "startDate=" in path and "endDate=" in path

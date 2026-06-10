@@ -586,6 +586,13 @@ def fmt_rate_per_million(rate):
     return "$%s.%s/M" % (whole, frac)
 
 
+def _fmt_breakdown_usd(cost):
+    """Format a per-row cost; tiny nonzero costs must not read as $0.00."""
+    if 0 < cost < 0.01:
+        return "<$0.01"
+    return fmt_usd(cost)
+
+
 def _strip_ansi(text):
     """Remove ANSI escape sequences from *text*."""
     return _ANSI_RE.sub("", text)
@@ -983,9 +990,16 @@ def render_full(stats, simple=False, use_color=True, theme="gradient"):
             )
             model_usage = a["model_usage"]
             total_tokens = sum(
-                u.get("inputTokens", 0) + u.get("outputTokens", 0)
+                (u.get("inputTokens") or 0) + u.get("outputTokens", 0)
                 for u in model_usage.values()
             )
+            total_cost = sum(
+                u["cost"] for u in model_usage.values()
+                if isinstance(u.get("cost"), (int, float))
+            )
+            # Providers like HuggingFace report requests + cost but no
+            # tokens; render those rows in cost mode.
+            cost_mode = total_tokens == 0 and total_cost > 0
 
             # Pre-pass: shorten all model names and find the longest
             shortened = {}
@@ -1002,11 +1016,17 @@ def render_full(stats, simple=False, use_color=True, theme="gradient"):
             metric_gap = 4
             post_name_gap = 3
             meta_gap = 2
-            sample_right = (
-                f"Tot: {'':>6}"
-                f"{' ' * metric_gap}In: {'':>6}"
-                f"{' ' * metric_gap}Out:{'':>6}"
-            )
+            if cost_mode:
+                sample_right = (
+                    f"Req: {'':>6}"
+                    f"{' ' * metric_gap}Cost: {'':>7}"
+                )
+            else:
+                sample_right = (
+                    f"Tot: {'':>6}"
+                    f"{' ' * metric_gap}In: {'':>6}"
+                    f"{' ' * metric_gap}Out:{'':>6}"
+                )
             available_w = model_line_w - 4
             min_bar_w = 4
             fixed_w = post_name_gap + 1 + pct_w + meta_gap + len(sample_right)
@@ -1025,13 +1045,23 @@ def render_full(stats, simple=False, use_color=True, theme="gradient"):
             model_rows = []
             for model, usage in model_usage.items():
                 short = shortened[model]
-                inp = usage.get("inputTokens", 0)
+                inp = usage.get("inputTokens")
                 out = usage.get("outputTokens", 0)
                 cache_read = usage.get("cacheReadInputTokens", 0)
                 cache_read += usage.get("cachedTokens", 0)
-                total = inp + out
-                pct = int(total * 100 / total_tokens) if total_tokens else 0
-                pct_label = "<1%" if pct == 0 and total > 0 else "%d%%" % pct
+                total = (inp or 0) + out
+                cost = usage.get("cost")
+                if not isinstance(cost, (int, float)):
+                    cost = 0.0
+
+                if cost_mode:
+                    sort_value = cost
+                    pct = int(cost * 100 / total_cost) if total_cost else 0
+                    pct_label = "<1%" if pct == 0 and cost > 0 else "%d%%" % pct
+                else:
+                    sort_value = total
+                    pct = int(total * 100 / total_tokens) if total_tokens else 0
+                    pct_label = "<1%" if pct == 0 and total > 0 else "%d%%" % pct
 
                 mini_filled = int(bar_w * pct / 100)
                 mini_empty = bar_w - mini_filled
@@ -1041,17 +1071,34 @@ def render_full(stats, simple=False, use_color=True, theme="gradient"):
                 fill_chars = _CH_FILL * mini_filled
                 empty_chars = _CH_EMPTY * mini_empty
 
-                in_s = fmt_short(inp)
-                out_s = fmt_short(out)
-                total_s = fmt_short(total)
-                total_cell = f"Tot: {total_s:>6}"
-                in_cell = f"In: {in_s:>6}"
-                out_cell = f"Out:{out_s:>6}"
-                right_block = (
-                    f"{total_cell}"
-                    f"{' ' * metric_gap}{in_cell}"
-                    f"{' ' * metric_gap}{out_cell}"
-                )
+                if cost_mode:
+                    reqs = usage.get("requests")
+                    req_s = fmt_short(reqs) if isinstance(reqs, int) else "N/A"
+                    cost_s = _fmt_breakdown_usd(cost)
+                    right_block = (
+                        f"Req: {req_s:>6}"
+                        f"{' ' * metric_gap}Cost: {cost_s:>7}"
+                    )
+                    right_block_styled = (
+                        f"{th.muted('Req:')} {req_s:>6}"
+                        f"{' ' * metric_gap}{th.muted('Cost:')} {cost_s:>7}"
+                    )
+                else:
+                    # Input tokens may simply not be tracked (Claude's
+                    # stats cache is output-only per period): N/A, not 0.
+                    in_s = "N/A" if inp is None else fmt_short(inp)
+                    out_s = fmt_short(out)
+                    total_s = fmt_short(total)
+                    right_block = (
+                        f"Tot: {total_s:>6}"
+                        f"{' ' * metric_gap}In: {in_s:>6}"
+                        f"{' ' * metric_gap}Out:{out_s:>6}"
+                    )
+                    right_block_styled = (
+                        f"{th.muted('Tot:')} {total_s:>6}"
+                        f"{' ' * metric_gap}{th.muted('In:')} {in_s:>6}"
+                        f"{' ' * metric_gap}{th.muted('Out:')}{out_s:>6}"
+                    )
 
                 short_disp = short[:name_w]
                 detail = (
@@ -1066,16 +1113,14 @@ def render_full(stats, simple=False, use_color=True, theme="gradient"):
                     f"{' ' * post_name_gap}{bar}"
                     f" {pct_label:>{pct_w}}"
                     f"{' ' * meta_gap}"
-                    f"{th.muted('Tot:')} {total_s:>6}"
-                    f"{' ' * metric_gap}{th.muted('In:')} {in_s:>6}"
-                    f"{' ' * metric_gap}{th.muted('Out:')}{out_s:>6}"
+                    f"{right_block_styled}"
                 )
 
                 # Cache hit line (shown below model row when data exists)
                 cache_line = None
                 cache_line_styled = None
                 if cache_read > 0:
-                    total_input = inp + cache_read
+                    total_input = (inp or 0) + cache_read
                     hit_pct = cache_read * 100 / total_input if total_input else 0
                     cache_tag = f"Cache: {hit_pct:.0f}% hit ({fmt_short(cache_read)} read)"
                     pad = " " * (name_w + 4)
@@ -1083,7 +1128,7 @@ def render_full(stats, simple=False, use_color=True, theme="gradient"):
                     cache_line_styled = f"    {pad}{th.muted(cache_tag)}"
 
                 model_rows.append(
-                    (total, short, detail_styled, detail,
+                    (sort_value, short, detail_styled, detail,
                      cache_line_styled, cache_line),
                 )
             for row in sorted(
@@ -1310,16 +1355,35 @@ def render_accessible(stats):
             lines.append(f"  {agent['name']}")
             rows = []
             for model, usage in agent["model_usage"].items():
-                total = usage.get("inputTokens", 0) + usage.get("outputTokens", 0)
-                rows.append((total, model, usage))
-            for total, model, usage in sorted(
+                total = (
+                    (usage.get("inputTokens") or 0)
+                    + usage.get("outputTokens", 0)
+                )
+                cost = usage.get("cost")
+                if total == 0 and isinstance(cost, (int, float)) and cost > 0:
+                    rows.append((cost, model, usage, True))
+                else:
+                    rows.append((total, model, usage, False))
+            for value, model, usage, is_cost in sorted(
                 rows,
                 key=lambda row: (-row[0], row[1].lower()),
             ):
+                if is_cost:
+                    reqs = usage.get("requests")
+                    req_part = (
+                        f"{fmt(reqs)} requests"
+                        if isinstance(reqs, int) else "requests N/A"
+                    )
+                    lines.append(
+                        f"    {model}: {req_part}, "
+                        f"{_fmt_breakdown_usd(value)}"
+                    )
+                    continue
+                inp = usage.get("inputTokens")
                 lines.append(
                     "    "
-                    f"{model}: total {fmt(total)}, "
-                    f"input {fmt(usage.get('inputTokens', 0))}, "
+                    f"{model}: total {fmt(value)}, "
+                    f"input {'N/A' if inp is None else fmt(inp)}, "
                     f"output {fmt(usage.get('outputTokens', 0))}"
                 )
         lines.append("")
