@@ -422,12 +422,35 @@ def aggregate_stats(
                 rolling_window, ref_date, offset,
             )
         else:
-            start, end, today_dt = compute_period(billing_day, offset)
+            custom = None
+            if offset == 0:
+                # Providers that report their own billing cycle (e.g.
+                # ElevenLabs exposes its quota reset timestamp) can supply
+                # exact period bounds. Only valid for the current period.
+                get_period = getattr(collector, "get_period", None)
+                if callable(get_period):
+                    try:
+                        custom = get_period(ref_date)
+                    except Exception:
+                        custom = None
+            if (
+                isinstance(custom, tuple) and len(custom) == 2
+                and all(isinstance(x, datetime) for x in custom)
+            ):
+                start, end = custom
+                today_dt = datetime(ref_date.year, ref_date.month, ref_date.day)
+            else:
+                start, end, today_dt = compute_period(billing_day, offset)
+
+        hide_when_empty = getattr(collector, "hide_when_empty", False)
+        if not isinstance(hide_when_empty, bool):
+            hide_when_empty = False
+
         stats = collector.get_stats(start, end, ref_date, live=live)
         if stats is None:
-            # API-backed rolling-window providers with no data get no row:
-            # "no access / no usage" must not render as a $0.00 agent.
-            if rolling_window > 0:
+            # API-backed providers with no data get no row: "no access /
+            # no usage" must not render as a $0.00 agent.
+            if rolling_window > 0 or hide_when_empty:
                 continue
             if not collector.is_available():
                 continue

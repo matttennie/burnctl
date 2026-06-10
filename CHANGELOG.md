@@ -14,8 +14,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `HUGGINGFACE_API_KEY` (billing read permission required) and falls back
   to local usage-log rows when the API is unavailable. Unrecognized API
   payloads are never guessed at — they warn and fall back
-- Inworld registered as a usage-log provider (Inworld exposes no public
-  usage API as of 2026-06)
+- ElevenLabs collector: character-quota counters from the subscription
+  API, period bounds from the provider's own quota reset timestamp, plan
+  name from the account tier. Quota units are labeled explicitly and no
+  USD cost is invented
+- Tavily collector: plan-credit counters from the usage API (credits map
+  to the messages column), plan name from the account
+- Collector hooks: `get_period` (provider-reported cycle bounds) and
+  `hide_when_empty` (quota providers with zero usage render no row)
+- Inworld, Groq, Mistral, Brave Search, Mercury, and Jina registered as
+  usage-log providers (none expose a public usage API as of 2026-06)
+- Scoped config (`burnctl config --<agent> ...`) now accepts all
+  registered provider ids
 - Rolling last-30-days reporting window for pay-as-you-go API providers
   (OpenRouter, HuggingFace, usage-log providers); billing-day periods now
   apply only to subscription agents. Days Left shows N/A for rolling

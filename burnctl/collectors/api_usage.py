@@ -55,6 +55,28 @@ _PROVIDER_META = {
         "name": "Inworld",
         "upgrade_url": "https://platform.inworld.ai/billing",
     },
+    # The providers below are dashboard-only (no public usage API as of
+    # 2026-06); usage rows logged to the burnctl usage file surface them.
+    "groq": {
+        "name": "Groq",
+        "upgrade_url": "https://console.groq.com/settings/billing",
+    },
+    "mistral": {
+        "name": "Mistral",
+        "upgrade_url": "https://console.mistral.ai/billing",
+    },
+    "brave": {
+        "name": "Brave Search",
+        "upgrade_url": "https://api-dashboard.search.brave.com/app/subscriptions",
+    },
+    "mercury": {
+        "name": "Mercury",
+        "upgrade_url": "https://platform.inceptionlabs.ai/",
+    },
+    "jina": {
+        "name": "Jina AI",
+        "upgrade_url": "https://jina.ai/api-dashboard/",
+    },
 }
 
 
@@ -223,6 +245,50 @@ def _hf_get_json(path, api_key, timeout=10):
 
 def _warn_hf_api(message):
     print("Warning: HuggingFace collector: " + message, file=sys.stderr)
+
+
+def _elevenlabs_get_json(path, api_key, timeout=10):
+    """Fetch JSON from the ElevenLabs API (xi-api-key auth)."""
+    req = urllib.request.Request(
+        "https://api.elevenlabs.io" + path,
+        headers={
+            "xi-api-key": api_key,
+            "Accept": "application/json",
+            "User-Agent": "burnctl/" + _BURNCTL_VERSION,
+        },
+    )
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        data = json.loads(resp.read().decode("utf-8"))
+        return data
+
+
+def _tavily_get_json(path, api_key, timeout=10):
+    """Fetch JSON from the Tavily API."""
+    req = urllib.request.Request(
+        "https://api.tavily.com" + path,
+        headers={
+            "Authorization": "Bearer " + api_key,
+            "Accept": "application/json",
+            "User-Agent": "burnctl/" + _BURNCTL_VERSION,
+        },
+    )
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        data = json.loads(resp.read().decode("utf-8"))
+        return data
+
+
+def _minus_one_month(dt):
+    """One calendar month before *dt*, clamping the day to month length."""
+    year, month = dt.year, dt.month - 1
+    if month == 0:
+        year, month = year - 1, 12
+    day = dt.day
+    while day > 28:
+        try:
+            return dt.replace(year=year, month=month, day=day)
+        except ValueError:
+            day -= 1
+    return dt.replace(year=year, month=month, day=day)
 
 
 def _parse_hf_usage(payload):
@@ -645,6 +711,184 @@ class HuggingFaceCollector(ApiUsageCollector):
         return stats
 
 
+class ElevenLabsCollector(BaseCollector):
+    """ElevenLabs character-quota usage from ``/v1/user/subscription``.
+
+    ElevenLabs reports current-cycle character counters (quota units, not
+    USD), so cost stays $0 and characters are shown explicitly labeled.
+    The period comes from the provider's own quota reset timestamp.
+    """
+
+    hide_when_empty = True
+
+    def __init__(self):
+        self._sub = None
+        self._sub_fetched = False
+
+    @property
+    def name(self):
+        return "ElevenLabs"
+
+    @property
+    def id(self):
+        return "elevenlabs"
+
+    def is_available(self):
+        return bool(os.environ.get("ELEVENLABS_API_KEY", "").strip())
+
+    def get_upgrade_url(self):
+        return "https://elevenlabs.io/app/subscription"
+
+    def _subscription(self, timeout=10):
+        if self._sub_fetched:
+            return self._sub
+        self._sub_fetched = True
+        api_key = os.environ.get("ELEVENLABS_API_KEY", "").strip()
+        if not api_key:
+            return None
+        try:
+            data = _elevenlabs_get_json(
+                "/v1/user/subscription", api_key, timeout=timeout,
+            )
+        except (urllib.error.URLError, ValueError, OSError) as err:
+            print(
+                "Warning: ElevenLabs collector: subscription request "
+                "failed: %s" % err,
+                file=sys.stderr,
+            )
+            return None
+        self._sub = data if isinstance(data, dict) else None
+        return self._sub
+
+    def get_period(self, ref_date):
+        sub = self._subscription()
+        if not isinstance(sub, dict):
+            return None
+        reset = sub.get("next_character_count_reset_unix")
+        if not isinstance(reset, (int, float)) or reset <= 0:
+            return None
+        end = datetime.fromtimestamp(reset)
+        return (_minus_one_month(end), end)
+
+    def get_plan_info(self, config):
+        info = BaseCollector.get_plan_info(self, config)
+        if info["plan_name"] == "pay-as-you-go":
+            sub = self._subscription()
+            if isinstance(sub, dict) and sub.get("tier"):
+                info["plan_name"] = str(sub["tier"])
+        return info
+
+    def get_stats(self, start, end, ref_date, live=False):
+        sub = self._subscription(timeout=2 if live else 10)
+        if not isinstance(sub, dict):
+            return None
+        count = sub.get("character_count")
+        if not isinstance(count, int) or count <= 0:
+            return None
+        return {
+            "messages": None,
+            "sessions": None,
+            "input_tokens": None,
+            "output_tokens": None,
+            # Characters consume prepaid quota/credits; the API reports
+            # no USD figures, so no cost is invented.
+            "period_cost": 0.0,
+            "alltime_cost": 0.0,
+            "model_usage": {
+                "characters (quota)": {"inputTokens": 0, "outputTokens": count},
+            },
+            "first_session": "",
+            "last_active": "",
+            "total_messages": None,
+            "total_sessions": None,
+            "tool_calls": 0,
+        }
+
+
+class TavilyCollector(BaseCollector):
+    """Tavily credit usage from ``/usage``.
+
+    Tavily reports current-plan credit counters (credits ≈ requests, no
+    USD figures); credits map to the messages column and cost stays $0.
+    """
+
+    hide_when_empty = True
+
+    def __init__(self):
+        self._usage = None
+        self._usage_fetched = False
+
+    @property
+    def name(self):
+        return "Tavily"
+
+    @property
+    def id(self):
+        return "tavily"
+
+    def is_available(self):
+        return bool(os.environ.get("TAVILY_API_KEY", "").strip())
+
+    def get_upgrade_url(self):
+        return "https://app.tavily.com/account/plan"
+
+    def _account(self, timeout=10):
+        if self._usage_fetched:
+            return self._usage
+        self._usage_fetched = True
+        api_key = os.environ.get("TAVILY_API_KEY", "").strip()
+        if not api_key:
+            return None
+        try:
+            data = _tavily_get_json("/usage", api_key, timeout=timeout)
+        except (urllib.error.URLError, ValueError, OSError) as err:
+            print(
+                "Warning: Tavily collector: usage request failed: %s" % err,
+                file=sys.stderr,
+            )
+            return None
+        account = data.get("account") if isinstance(data, dict) else None
+        self._usage = account if isinstance(account, dict) else None
+        return self._usage
+
+    def get_plan_info(self, config):
+        info = BaseCollector.get_plan_info(self, config)
+        if info["plan_name"] == "pay-as-you-go":
+            account = self._account()
+            if isinstance(account, dict) and account.get("current_plan"):
+                info["plan_name"] = str(account["current_plan"])
+        return info
+
+    def get_stats(self, start, end, ref_date, live=False):
+        account = self._account(timeout=2 if live else 10)
+        if not isinstance(account, dict):
+            return None
+        plan_usage = account.get("plan_usage")
+        paygo_usage = account.get("paygo_usage")
+        credits = 0
+        if isinstance(plan_usage, int):
+            credits += plan_usage
+        if isinstance(paygo_usage, int):
+            credits += paygo_usage
+        if credits <= 0:
+            return None
+        return {
+            "messages": credits,
+            "sessions": None,
+            "input_tokens": None,
+            "output_tokens": None,
+            # Credits are plan quota units; the API reports no USD figures.
+            "period_cost": 0.0,
+            "alltime_cost": 0.0,
+            "model_usage": {},
+            "first_session": "",
+            "last_active": "",
+            "total_messages": None,
+            "total_sessions": None,
+            "tool_calls": 0,
+        }
+
+
 def discover_collectors(usage_file=None):
     """Return provider collectors.
 
@@ -665,10 +909,12 @@ def discover_collectors(usage_file=None):
     collectors: List[BaseCollector] = [
         OpenRouterCollector(),
         HuggingFaceCollector(usage_file),
+        ElevenLabsCollector(),
+        TavilyCollector(),
     ]
 
     for pid in providers:
-        if pid in ("openrouter", "huggingface"):
+        if pid in ("openrouter", "huggingface", "elevenlabs", "tavily"):
             continue
         meta = _PROVIDER_META.get(pid, {})
         display_name = meta.get("name", pid.title())

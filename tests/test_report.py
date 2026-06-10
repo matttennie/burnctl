@@ -2352,3 +2352,51 @@ class TestColumnOverflow:
         ]
         widths = {len(ln) for ln in box_lines}
         assert len(widths) == 1, f"misaligned box widths: {sorted(widths)}"
+
+
+class TestCollectorPeriodHooks:
+    """Collectors can supply their own period (provider-reported cycles)
+    and opt out of rendering when they have no usage."""
+
+    def test_get_period_overrides_billing_period(self):
+        c = _make_collector(billing_day=1)
+        c.rolling_window_days = 0
+        c.get_period = lambda ref: (
+            datetime(2026, 5, 27), datetime(2026, 6, 27),
+        )
+        result = aggregate_stats([c], {}, ref_date=datetime(2026, 6, 9))
+        agent = result["agents"][0]
+        assert agent["period_start"] == "2026-05-27"
+        assert agent["period_end"] == "2026-06-27"
+
+    def test_get_period_ignored_for_offset_periods(self):
+        # -P last cannot be answered by a provider that only reports its
+        # current cycle; fall back to billing-day math.
+        c = _make_collector(billing_day=1)
+        c.rolling_window_days = 0
+        c.get_period = lambda ref: (
+            datetime(2026, 5, 27), datetime(2026, 6, 27),
+        )
+        result = aggregate_stats(
+            [c], {}, ref_date=datetime(2026, 6, 9), offset=-1,
+        )
+        agent = result["agents"][0]
+        assert agent["period_start"] == "2026-05-01"
+        assert agent["period_end"] == "2026-06-01"
+
+    def test_get_period_invalid_return_falls_back(self):
+        # An unspecced mock's get_period returns a Mock — must be ignored.
+        c = _make_collector(billing_day=1)
+        c.rolling_window_days = 0
+        result = aggregate_stats([c], {}, ref_date=datetime(2026, 6, 9))
+        agent = result["agents"][0]
+        assert agent["period_start"] == "2026-06-01"
+
+    def test_hide_when_empty_skips_agent(self):
+        c = _make_collector()
+        c.rolling_window_days = 0
+        c.hide_when_empty = True
+        c.get_stats.return_value = None
+        c.is_available.return_value = True
+        result = aggregate_stats([c], {}, ref_date=datetime(2026, 6, 9))
+        assert result["agents"] == []

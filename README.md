@@ -13,11 +13,15 @@ Reads local session data plus provider APIs you already use, then shows tokens, 
 | Codex CLI | `~/.codex/sessions/*.jsonl` |
 | OpenRouter | OpenRouter activity API + local request ledger |
 | HuggingFace | HF billing API (`HF_TOKEN` with billing read permission) |
-| Inworld et al. | `~/.config/burnctl/usage.jsonl` |
+| ElevenLabs | Subscription API (`ELEVENLABS_API_KEY`) — character quota |
+| Tavily | Usage API (`TAVILY_API_KEY`) — plan credits |
+| Inworld, Groq, Mistral, Brave, Mercury, Jina | `~/.config/burnctl/usage.jsonl` (no public usage APIs) |
 | OpenCode | Stub — PRs welcome |
 
 API providers (OpenRouter, HuggingFace, usage-log providers) report a
-rolling last-30-days window instead of a billing-day period.
+rolling last-30-days window instead of a billing-day period. Quota
+providers (ElevenLabs, Tavily) show provider-reported current-cycle
+counters and are hidden while usage is zero.
 
 ## Install
 

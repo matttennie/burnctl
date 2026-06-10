@@ -113,6 +113,9 @@ _VALIDATORS = {
 
 _SCOPED_AGENTS = (
     "claude", "gemini", "codex", "openrouter",
+    "huggingface", "elevenlabs", "tavily", "inworld",
+    "groq", "mistral", "brave", "mercury", "jina",
+    "anthropic", "openai",
     "local", "opencode",
 )
 

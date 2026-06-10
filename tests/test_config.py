@@ -881,3 +881,25 @@ class TestConfigEdgeCases:
         assert os.path.isfile(config_file)
         file_mode = stat.S_IMODE(os.stat(config_file).st_mode)
         assert file_mode == 0o600
+
+
+class TestScopedNewProviders:
+    def test_new_provider_ids_accept_scoped_config(self, tmp_path, monkeypatch):
+        import burnctl.config as config_mod
+        from burnctl.config import set_scoped_values
+
+        monkeypatch.setattr(config_mod, "CONFIG_DIR", str(tmp_path))
+        monkeypatch.setattr(
+            config_mod, "CONFIG_FILE", str(tmp_path / "config.json"),
+        )
+        for agent in (
+            "huggingface", "elevenlabs", "tavily", "inworld",
+            "groq", "mistral", "brave", "mercury", "jina",
+            "anthropic", "openai",
+        ):
+            set_scoped_values(agent, [("billing_day", "15")])
+
+        import json as _json
+        saved = _json.loads((tmp_path / "config.json").read_text())
+        assert saved["agent_billing_days"]["elevenlabs"] == 15
+        assert saved["agent_billing_days"]["tavily"] == 15

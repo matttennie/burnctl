@@ -3075,3 +3075,187 @@ class TestDiscoverCollectorsInworld:
         assert len(inworld) == 1
         assert inworld[0].name == "Inworld"
         assert "inworld.ai" in inworld[0].get_upgrade_url()
+
+
+# ---------------------------------------------------------------------------
+# ElevenLabs and Tavily quota collectors
+# ---------------------------------------------------------------------------
+
+
+class TestElevenLabsCollector:
+    """ElevenLabs reports current-cycle character quota counters
+    (no USD costs) from /v1/user/subscription."""
+
+    def _payload(self, count=4200):
+        # Real shape captured 2026-06-09.
+        return {
+            "tier": "payg",
+            "character_count": count,
+            "character_limit": 10000,
+            "next_character_count_reset_unix": 1782535563,
+        }
+
+    def _collector(self, monkeypatch, payload):
+        from burnctl.collectors import api_usage as mod
+
+        monkeypatch.setenv("ELEVENLABS_API_KEY", "el_x")
+        monkeypatch.setattr(
+            mod, "_elevenlabs_get_json", lambda *a, **k: payload,
+        )
+        return mod.ElevenLabsCollector()
+
+    def test_unavailable_without_key(self, monkeypatch):
+        from burnctl.collectors.api_usage import ElevenLabsCollector
+        monkeypatch.delenv("ELEVENLABS_API_KEY", raising=False)
+        assert ElevenLabsCollector().is_available() is False
+
+    def test_zero_usage_returns_none_and_hides(self, monkeypatch):
+        c = self._collector(monkeypatch, self._payload(count=0))
+        stats = c.get_stats(
+            datetime(2026, 5, 27), datetime(2026, 6, 27), datetime(2026, 6, 9),
+        )
+        assert stats is None
+        assert c.hide_when_empty is True
+
+    def test_characters_reported_explicitly_labeled(self, monkeypatch):
+        c = self._collector(monkeypatch, self._payload(count=4200))
+        stats = c.get_stats(
+            datetime(2026, 5, 27), datetime(2026, 6, 27), datetime(2026, 6, 9),
+        )
+        assert stats is not None
+        # Quota units, not USD: cost stays 0 and tokens stay N/A.
+        assert stats["period_cost"] == 0.0
+        assert stats["input_tokens"] is None
+        assert stats["output_tokens"] is None
+        labels = list(stats["model_usage"].keys())
+        assert labels and "character" in labels[0].lower()
+        assert stats["model_usage"][labels[0]]["outputTokens"] == 4200
+
+    def test_get_period_uses_reset_timestamp(self, monkeypatch):
+        c = self._collector(monkeypatch, self._payload())
+        period = c.get_period(datetime(2026, 6, 9))
+        assert period is not None
+        start, end = period
+        assert end == datetime.fromtimestamp(1782535563)
+        # One calendar month before the reset.
+        assert (end - start).days in (28, 29, 30, 31)
+
+    def test_plan_name_from_api_tier(self, monkeypatch):
+        c = self._collector(monkeypatch, self._payload())
+        info = c.get_plan_info({})
+        assert info["plan_name"] == "payg"
+
+    def test_configured_plan_beats_api_tier(self, monkeypatch):
+        c = self._collector(monkeypatch, self._payload())
+        info = c.get_plan_info({"agent_plans": {"elevenlabs": "creator"}})
+        assert info["plan_name"] == "creator"
+
+    def test_api_error_returns_none(self, monkeypatch, capsys):
+        from burnctl.collectors import api_usage as mod
+        import urllib.error
+
+        monkeypatch.setenv("ELEVENLABS_API_KEY", "el_x")
+
+        def boom(*a, **k):
+            raise urllib.error.HTTPError("u", 401, "x", {}, None)
+
+        monkeypatch.setattr(mod, "_elevenlabs_get_json", boom)
+        c = mod.ElevenLabsCollector()
+        stats = c.get_stats(
+            datetime(2026, 5, 27), datetime(2026, 6, 27), datetime(2026, 6, 9),
+        )
+        assert stats is None
+        assert "elevenlabs" in capsys.readouterr().err.lower()
+
+    def test_subscription_fetched_once_per_instance(self, monkeypatch):
+        from burnctl.collectors import api_usage as mod
+
+        monkeypatch.setenv("ELEVENLABS_API_KEY", "el_x")
+        calls = {"n": 0}
+
+        def counting(*a, **k):
+            calls["n"] += 1
+            return self._payload()
+
+        monkeypatch.setattr(mod, "_elevenlabs_get_json", counting)
+        c = mod.ElevenLabsCollector()
+        c.get_plan_info({})
+        c.get_period(datetime(2026, 6, 9))
+        c.get_stats(
+            datetime(2026, 5, 27), datetime(2026, 6, 27), datetime(2026, 6, 9),
+        )
+        assert calls["n"] == 1
+
+
+class TestTavilyCollector:
+    """Tavily reports current-plan credit counters from /usage."""
+
+    def _payload(self, plan_usage=37, paygo=3):
+        # Real shape captured 2026-06-09.
+        return {
+            "key": {"usage": 0, "limit": None},
+            "account": {
+                "current_plan": "Researcher",
+                "plan_usage": plan_usage,
+                "plan_limit": 1000,
+                "search_usage": plan_usage,
+                "paygo_usage": paygo,
+                "paygo_limit": None,
+            },
+        }
+
+    def _collector(self, monkeypatch, payload):
+        from burnctl.collectors import api_usage as mod
+
+        monkeypatch.setenv("TAVILY_API_KEY", "tvly_x")
+        monkeypatch.setattr(mod, "_tavily_get_json", lambda *a, **k: payload)
+        return mod.TavilyCollector()
+
+    def test_unavailable_without_key(self, monkeypatch):
+        from burnctl.collectors.api_usage import TavilyCollector
+        monkeypatch.delenv("TAVILY_API_KEY", raising=False)
+        assert TavilyCollector().is_available() is False
+
+    def test_zero_usage_returns_none(self, monkeypatch):
+        c = self._collector(monkeypatch, self._payload(plan_usage=0, paygo=0))
+        stats = c.get_stats(
+            datetime(2026, 6, 1), datetime(2026, 7, 1), datetime(2026, 6, 9),
+        )
+        assert stats is None
+        assert c.hide_when_empty is True
+
+    def test_credits_reported_as_messages(self, monkeypatch):
+        c = self._collector(monkeypatch, self._payload(plan_usage=37, paygo=3))
+        stats = c.get_stats(
+            datetime(2026, 6, 1), datetime(2026, 7, 1), datetime(2026, 6, 9),
+        )
+        assert stats is not None
+        assert stats["messages"] == 40
+        assert stats["period_cost"] == 0.0
+        assert stats["output_tokens"] is None
+
+    def test_plan_name_from_api(self, monkeypatch):
+        c = self._collector(monkeypatch, self._payload())
+        info = c.get_plan_info({})
+        assert info["plan_name"] == "Researcher"
+
+
+class TestNewUsageLogProviders:
+    def test_groq_mistral_brave_mercury_jina_registered(self, tmp_path):
+        from burnctl.collectors.api_usage import discover_collectors
+
+        usage = tmp_path / "usage.jsonl"
+        lines = []
+        for pid in ("groq", "mistral", "brave", "mercury", "jina"):
+            lines.append(json.dumps({
+                "ts": "2026-06-01T10:00:00Z",
+                "provider": pid,
+                "model_id": "m",
+                "cost": 0.01,
+            }))
+        usage.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+        collectors = discover_collectors(str(usage))
+        ids = {c.id for c in collectors}
+        for pid in ("groq", "mistral", "brave", "mercury", "jina"):
+            assert pid in ids

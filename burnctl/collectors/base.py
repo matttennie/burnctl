@@ -61,6 +61,13 @@ class BaseCollector(ABC):
     # billing-day-anchored period.  Pay-as-you-go API providers set this.
     rolling_window_days = 0
 
+    # When True, the agent is omitted from the report when get_stats
+    # returns None (quota providers with zero usage this cycle).
+    hide_when_empty = False
+
+    # Collectors may also define ``get_period(ref_date) -> (start, end)``
+    # to supply provider-reported cycle bounds for the current period.
+
     @property
     @abstractmethod
     def name(self):
