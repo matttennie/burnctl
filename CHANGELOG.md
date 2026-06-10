@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `default_agents` config key is now honored: with no agent flags, the report
+  is limited to the configured agents (explicit flags and `--all` still
+  override). It was documented and persisted but never read
+- Codex `go` plan is now priced at $8/mo from `CODEX_PLAN_PRICES`; it was
+  accepted by config validation but silently priced at $0 by the collector
+- fish shell hook now emits fish-native syntax (`set -gx` / `set -e`); it
+  previously sourced a POSIX `export`/`unset` env file, which fish cannot
+  parse, breaking every new fish shell after setup
+- OpenRouter proxy now sends `Content-Length` for buffered responses and
+  closes the connection after SSE streams; HTTP/1.1 keep-alive clients
+  previously hung waiting for the end of the response body
+- `--until` without `--since` now errors instead of being silently ignored
+- `-i/--interval` now validates and normalizes interval aliases
+  (e.g. `yearly` → `yr`) the same way `burnctl config billing_interval` does
 - `ApiUsageCollector._file` referenced the old `USAGE_FILE` constant after the Orchard removal — any caller that did not pass an explicit `usage_file` would hit a `NameError` at runtime
 - OpenRouter proxy `_parse_json_usage` wrote zero-token ledger records for streamed SSE chunks that contained no `usage` object, overwriting the real record on non-final frames
 - OpenRouter proxy `_parse_json_usage` ignored a top-level `reasoning_tokens` field when `completion_tokens_details` was absent
@@ -19,6 +33,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Gemini and Codex collectors now cache parsed session files by
+  (mtime, size) in top-mode, implementing the stale-file optimization the
+  0.3.2 notes claimed; unchanged files are no longer re-parsed every refresh
+- Pricing history file is cached in memory and the static-table snapshot
+  check runs once per process; previously the history JSON was re-read from
+  disk twice per pricing lookup, per message/checkpoint
+- Codex token checkpoints are walked once instead of twice (all-time and
+  period accounting share each delta and pricing lookup)
+- `usage.jsonl` provider entries are parsed once per file state instead of
+  once each for discovery, availability, and stats
 - Upgraded project classifier from Alpha to Beta to reflect shipping maturity
 - `.pre-commit-config.yaml` now also runs mypy so local hooks match CI enforcement
 - `.flake8` no longer blanket-suppresses `E501`/`F541` inside `burnctl/report.py`

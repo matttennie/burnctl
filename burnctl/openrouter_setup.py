@@ -51,11 +51,11 @@ def _shell_rc_path():
 def _rc_block(shell=""):
     """Return the shell hook block appropriate for the detected shell."""
     if shell == "fish":
+        # fish cannot parse the POSIX env file, so set variables natively.
         return (
             RC_BEGIN + "\n"
-            + "if test -f %s\n" % ENV_FILE
-            + "    source %s\n" % ENV_FILE
-            + "end\n"
+            + 'set -gx OPENROUTER_BASE_URL "%s"\n' % PROXY_URL
+            + "set -q OPENAI_BASE_URL; and set -e OPENAI_BASE_URL\n"
             + RC_END + "\n"
         )
     # POSIX shells (bash, zsh)

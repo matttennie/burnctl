@@ -137,15 +137,16 @@ class _ProxyHandler(BaseHTTPRequestHandler):
         try:
             with urllib.request.urlopen(req, timeout=60) as resp:
                 content_type = resp.headers.get("Content-Type", "")
-                self.send_response(resp.status)
-                for key, value in resp.headers.items():
-                    if key.lower() in _HOP_BY_HOP or key.lower() == "content-length":
-                        continue
-                    self.send_header(key, value)
-                self.end_headers()
 
                 ledger_record = None
                 if "text/event-stream" in content_type:
+                    # No Content-Length is possible for a live stream, so the
+                    # end of the body must be signalled by closing the
+                    # connection once the upstream stream finishes.
+                    self.close_connection = True
+                    self.send_response(resp.status)
+                    self._copy_headers(resp.headers)
+                    self.end_headers()
                     model = "unknown"
                     request_id = ""
                     while True:
@@ -159,6 +160,10 @@ class _ProxyHandler(BaseHTTPRequestHandler):
                             ledger_record = maybe
                 else:
                     payload = resp.read()
+                    self.send_response(resp.status)
+                    self._copy_headers(resp.headers)
+                    self.send_header("Content-Length", str(len(payload)))
+                    self.end_headers()
                     self.wfile.write(payload)
                     try:
                         obj = json.loads(payload.decode("utf-8"))
@@ -172,15 +177,20 @@ class _ProxyHandler(BaseHTTPRequestHandler):
         except urllib.error.HTTPError as err:
             payload = err.read()
             self.send_response(err.code)
-            for key, value in err.headers.items():
-                if key.lower() in _HOP_BY_HOP or key.lower() == "content-length":
-                    continue
-                self.send_header(key, value)
+            self._copy_headers(err.headers)
+            self.send_header("Content-Length", str(len(payload)))
             self.end_headers()
             if payload:
                 self.wfile.write(payload)
         except urllib.error.URLError as err:
             self.send_error(502, "Upstream OpenRouter request failed: %s" % err)
+
+    def _copy_headers(self, headers):
+        """Relay upstream headers, dropping hop-by-hop and Content-Length."""
+        for key, value in headers.items():
+            if key.lower() in _HOP_BY_HOP or key.lower() == "content-length":
+                continue
+            self.send_header(key, value)
 
 
 def run_proxy(host=None, port=None, ledger_path=None):

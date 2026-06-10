@@ -7,7 +7,7 @@ from shlex import quote
 
 from burnctl import __version__
 from burnctl.collectors import ALL_COLLECTORS
-from burnctl.config import PUBLIC_GLOBAL_KEYS, THEMES
+from burnctl.config import _INTERVAL_ALIASES, PUBLIC_GLOBAL_KEYS, THEMES
 from burnctl.openrouter_setup import (
     PROXY_HOST,
     PROXY_PORT,
@@ -240,8 +240,11 @@ def _build_parser():
 
 # ── Agent resolution ────────────────────────────────────────────────
 
-def _resolve_collectors(args):
-    """Determine which collectors to use based on CLI flags.
+def _resolve_collectors(args, config=None):
+    """Determine which collectors to use based on CLI flags and config.
+
+    Precedence: explicit per-agent flags > ``--all`` > the
+    ``default_agents`` config key > all detected agents.
 
     Returns a list of collector instances, or prints an error and
     exits if none are available.
@@ -253,8 +256,21 @@ def _resolve_collectors(args):
     if explicit:
         selected = explicit
     else:
-        # --all or no flags: use everything that's available
         selected = [c for c in ALL_COLLECTORS if c.is_available()]
+        # Without --all, honor the configured default_agents subset.
+        if not getattr(args, "all", False) and config:
+            wanted = str(config.get("default_agents", "all")).strip().lower()
+            if wanted and wanted != "all":
+                ids = [p.strip() for p in wanted.split(",") if p.strip()]
+                known_ids = {c.id for c in ALL_COLLECTORS}
+                unknown = [i for i in ids if i not in known_ids]
+                if unknown:
+                    print(
+                        "Warning: unknown agent(s) in default_agents config: "
+                        + ", ".join(unknown),
+                        file=sys.stderr,
+                    )
+                selected = [c for c in selected if c.id in ids]
 
     if not selected:
         print(
@@ -279,7 +295,15 @@ def _merge_config(args, config):
     if args.plan:
         config["claude_plan"] = args.plan
     if args.interval:
-        config["billing_interval"] = args.interval
+        normalized = _INTERVAL_ALIASES.get(args.interval.lower())
+        if normalized is None:
+            valid = ", ".join(sorted(set(_INTERVAL_ALIASES)))
+            print(
+                f"Error: --interval must be one of: {valid}.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        config["billing_interval"] = normalized
     if args.billing_day is not None:
         if not 1 <= args.billing_day <= 31:
             print(
@@ -314,15 +338,8 @@ def _handle_config(args):
 
     if not items:
         if scope:
-            cfg = load()
-            plan = cfg.get("agent_plans", {}).get(scope)
-            if not plan:
-                plan = cfg.get(f"{scope}_plan", "")
-            billing_day = cfg.get("agent_billing_days", {}).get(scope, 0)
-            if not billing_day:
-                billing_day = cfg.get(f"{scope}_billing_day", 0) or cfg.get("billing_day", 1)
-            print(f"{scope}.billing_plan: {plan}")
-            print(f"{scope}.billing_day: {billing_day}")
+            get_scoped_value(scope, "billing_plan")
+            get_scoped_value(scope, "billing_day")
             return
         show()
         return
@@ -530,6 +547,11 @@ def _render_report(args, config, collectors):
     start_override = end_override = None
     since = getattr(args, "since", None)
     until = getattr(args, "until", None)
+    if until and not since:
+        print(
+            "Error: --until requires --since.", file=sys.stderr,
+        )
+        sys.exit(1)
     if since:
         try:
             start_override = _dt.strptime(since, "%Y-%m-%d")
@@ -635,7 +657,7 @@ def main():
     if bootstrapped and message:
         print(message, file=sys.stderr)
 
-    collectors = _resolve_collectors(args)
+    collectors = _resolve_collectors(args, config)
 
     if getattr(args, "top_mode", False):
         import time

@@ -9,7 +9,11 @@ import json
 import os
 from datetime import datetime
 
-from burnctl.collectors.base import BaseCollector, _check_file_size
+from burnctl.collectors.base import (
+    BaseCollector,
+    _check_file_size,
+    load_with_stat_cache,
+)
 from burnctl.pricing import get_agent_pricing, get_model_pricing_for_time
 
 _GEMINI_DIR = os.path.join(os.path.expanduser("~"), ".gemini")
@@ -25,6 +29,27 @@ def _parse_iso(ts):
         return datetime.fromisoformat(ts)
     except (ValueError, TypeError):
         return None
+
+
+def _load_session(fpath):
+    """Load one session JSON file, returning None when unusable."""
+    if not _check_file_size(fpath):
+        return None
+    try:
+        with open(fpath, encoding="utf-8", errors="replace") as f:
+            session = json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return None
+    return session if isinstance(session, dict) else None
+
+
+# Live/top-mode parse cache: path -> ((st_mtime_ns, st_size), session).
+_SESSION_JSON_CACHE = {}  # type: dict
+
+
+def _load_session_cached(fpath):
+    """Load a session file, reusing the cached result when unchanged."""
+    return load_with_stat_cache(_SESSION_JSON_CACHE, fpath, _load_session)
 
 
 class GeminiCollector(BaseCollector):
@@ -68,14 +93,10 @@ class GeminiCollector(BaseCollector):
         end_str = end.strftime("%Y-%m-%d")
 
         for fpath in session_files:
-            if not _check_file_size(fpath):
-                continue
-            try:
-                with open(fpath, encoding="utf-8", errors="replace") as f:
-                    session = json.load(f)
-                if not isinstance(session, dict):
-                    continue
-            except (json.JSONDecodeError, OSError):
+            session = (
+                _load_session_cached(fpath) if live else _load_session(fpath)
+            )
+            if session is None:
                 continue
 
             messages = session.get("messages", [])

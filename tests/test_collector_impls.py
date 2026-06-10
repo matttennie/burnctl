@@ -1495,6 +1495,13 @@ class TestCodexPlanInfo:
         assert info["plan_name"] == "pro"
         assert info["plan_price"] == 200
 
+    def test_go(self):
+        # 'go' is a valid plan per CODEX_PLAN_PRICES ($8/mo); the collector
+        # must price it, not silently fall back to $0.
+        info = CodexCollector().get_plan_info({"agent_plans": {"codex": "go"}})
+        assert info["plan_name"] == "go"
+        assert info["plan_price"] == 8
+
     def test_unknown_plan_defaults_zero(self):
         info = CodexCollector().get_plan_info({"agent_plans": {"codex": "bogus"}})
         assert info["plan_price"] == 0
@@ -2576,3 +2583,242 @@ class TestApiUsageParseEntryEdgeCases:
         assert result["input_tokens"] == 0
         assert result["output_tokens"] == 0
         assert result["cost"] == 0.0
+
+
+# ---------------------------------------------------------------------------
+# Live-mode (top-mode) session parse caching
+# ---------------------------------------------------------------------------
+
+
+class TestCodexLiveParseCache:
+    """In live/top mode, unchanged session files must not be re-parsed on
+    every refresh (CHANGELOG 0.3.2: skip stale session files in top-mode)."""
+
+    def _write_session(self, session_dir, name="s1.jsonl", extra_msgs=0):
+        lines = [
+            json.dumps({
+                "type": "session_meta",
+                "timestamp": "2026-06-01T10:00:00Z",
+                "payload": {"timestamp": "2026-06-01T10:00:00Z"},
+            }),
+            json.dumps({"type": "turn_context", "payload": {"model": "gpt-5.4"}}),
+            json.dumps({
+                "type": "event_msg",
+                "timestamp": "2026-06-01T10:01:00Z",
+                "payload": {"type": "user_message"},
+            }),
+        ]
+        for i in range(extra_msgs):
+            lines.append(json.dumps({
+                "type": "event_msg",
+                "timestamp": "2026-06-01T10:0%d:00Z" % (2 + i),
+                "payload": {"type": "user_message"},
+            }))
+        path = session_dir / name
+        path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        return path
+
+    def _setup(self, tmp_path, monkeypatch):
+        from burnctl.collectors import codex as codex_mod
+
+        session_dir = tmp_path / "sessions"
+        session_dir.mkdir()
+        monkeypatch.setattr(codex_mod, "SESSIONS_DIR", str(session_dir))
+        monkeypatch.setattr(
+            codex_mod, "HISTORY_FILE", str(tmp_path / "history.jsonl"),
+        )
+        monkeypatch.setattr(codex_mod, "get_agent_pricing", lambda a: {})
+        monkeypatch.setattr(
+            codex_mod, "get_model_pricing_for_time", lambda *a, **k: {},
+        )
+        getattr(codex_mod, "_SESSION_PARSE_CACHE", {}).clear()
+        return codex_mod, session_dir
+
+    def _period(self):
+        start = datetime(2026, 6, 1, tzinfo=timezone.utc)
+        end = datetime(2026, 7, 1, tzinfo=timezone.utc)
+        ref = datetime(2026, 6, 9, tzinfo=timezone.utc)
+        return start, end, ref
+
+    def test_live_mode_skips_reparsing_unchanged_files(
+        self, tmp_path, monkeypatch,
+    ):
+        codex_mod, session_dir = self._setup(tmp_path, monkeypatch)
+        self._write_session(session_dir)
+
+        calls = {"n": 0}
+        real_parse = codex_mod._parse_session
+
+        def counting(path):
+            calls["n"] += 1
+            return real_parse(path)
+
+        monkeypatch.setattr(codex_mod, "_parse_session", counting)
+        start, end, ref = self._period()
+        collector = codex_mod.CodexCollector()
+
+        first = collector.get_stats(start, end, ref, live=True)
+        second = collector.get_stats(start, end, ref, live=True)
+        assert calls["n"] == 1
+        assert first["messages"] == second["messages"] == 1
+
+    def test_one_shot_mode_always_reparses(self, tmp_path, monkeypatch):
+        codex_mod, session_dir = self._setup(tmp_path, monkeypatch)
+        self._write_session(session_dir)
+
+        calls = {"n": 0}
+        real_parse = codex_mod._parse_session
+
+        def counting(path):
+            calls["n"] += 1
+            return real_parse(path)
+
+        monkeypatch.setattr(codex_mod, "_parse_session", counting)
+        start, end, ref = self._period()
+        collector = codex_mod.CodexCollector()
+
+        collector.get_stats(start, end, ref, live=False)
+        collector.get_stats(start, end, ref, live=False)
+        assert calls["n"] == 2
+
+    def test_live_mode_reparses_changed_files(self, tmp_path, monkeypatch):
+        codex_mod, session_dir = self._setup(tmp_path, monkeypatch)
+        self._write_session(session_dir)
+        start, end, ref = self._period()
+        collector = codex_mod.CodexCollector()
+
+        first = collector.get_stats(start, end, ref, live=True)
+        assert first["messages"] == 1
+
+        # Append a second user message — file size changes, cache must miss.
+        self._write_session(session_dir, extra_msgs=1)
+        second = collector.get_stats(start, end, ref, live=True)
+        assert second["messages"] == 2
+
+
+class TestGeminiLiveParseCache:
+    """Gemini session JSON files are cached by (mtime, size) in live mode."""
+
+    def _write_session(self, chats_dir, name="session-1.json", msgs=1):
+        messages = [
+            {"type": "user", "timestamp": "2026-06-01T10:00:05Z"},
+        ]
+        for i in range(msgs - 1):
+            messages.append(
+                {"type": "user", "timestamp": "2026-06-01T10:0%d:05Z" % (1 + i)},
+            )
+        messages.append({
+            "type": "gemini",
+            "timestamp": "2026-06-01T10:00:10Z",
+            "model": "gemini-2.5-pro",
+            "tokens": {"input": 100, "output": 50},
+        })
+        session = {"startTime": "2026-06-01T10:00:00Z", "messages": messages}
+        (chats_dir / name).write_text(json.dumps(session), encoding="utf-8")
+
+    def _setup(self, tmp_path, monkeypatch):
+        from burnctl.collectors import gemini as gemini_mod
+
+        chats_dir = tmp_path / "chats"
+        chats_dir.mkdir()
+        monkeypatch.setattr(
+            gemini_mod, "_CHAT_PATTERN", str(chats_dir / "session-*.json"),
+        )
+        monkeypatch.setattr(gemini_mod, "get_agent_pricing", lambda a: {})
+        monkeypatch.setattr(
+            gemini_mod, "get_model_pricing_for_time", lambda *a, **k: {},
+        )
+        getattr(gemini_mod, "_SESSION_JSON_CACHE", {}).clear()
+        return gemini_mod, chats_dir
+
+    def _period(self):
+        return (
+            datetime(2026, 6, 1),
+            datetime(2026, 7, 1),
+            datetime(2026, 6, 9),
+        )
+
+    def test_live_mode_skips_rereading_unchanged_files(
+        self, tmp_path, monkeypatch,
+    ):
+        gemini_mod, chats_dir = self._setup(tmp_path, monkeypatch)
+        self._write_session(chats_dir)
+
+        calls = {"n": 0}
+        real_load = gemini_mod._load_session
+
+        def counting(path):
+            calls["n"] += 1
+            return real_load(path)
+
+        monkeypatch.setattr(gemini_mod, "_load_session", counting)
+        start, end, ref = self._period()
+        collector = gemini_mod.GeminiCollector()
+
+        first = collector.get_stats(start, end, ref, live=True)
+        second = collector.get_stats(start, end, ref, live=True)
+        assert calls["n"] == 1
+        assert first["messages"] == second["messages"] == 1
+
+    def test_live_mode_rereads_changed_files(self, tmp_path, monkeypatch):
+        gemini_mod, chats_dir = self._setup(tmp_path, monkeypatch)
+        self._write_session(chats_dir)
+        start, end, ref = self._period()
+        collector = gemini_mod.GeminiCollector()
+
+        first = collector.get_stats(start, end, ref, live=True)
+        assert first["messages"] == 1
+
+        self._write_session(chats_dir, msgs=2)
+        second = collector.get_stats(start, end, ref, live=True)
+        assert second["messages"] == 2
+
+
+class TestUsageFileEntriesCache:
+    """usage.jsonl is read at discovery, availability, and stats time;
+    repeated loads of an unchanged file must parse it only once."""
+
+    def _entry(self, ts="2026-06-01T10:00:00Z"):
+        return json.dumps({
+            "ts": ts,
+            "provider": "huggingface",
+            "model_id": "m1",
+            "input_tokens": 10,
+            "output_tokens": 5,
+            "cost": 0.01,
+        })
+
+    def test_repeated_loads_parse_file_once(self, tmp_path, monkeypatch):
+        from burnctl.collectors import api_usage as mod
+
+        usage = tmp_path / "usage.jsonl"
+        usage.write_text(self._entry() + "\n", encoding="utf-8")
+        getattr(mod, "_ENTRIES_CACHE", {}).clear()
+
+        calls = {"n": 0}
+        real = mod._parse_entry
+
+        def counting(line):
+            calls["n"] += 1
+            return real(line)
+
+        monkeypatch.setattr(mod, "_parse_entry", counting)
+        first = mod._load_entries(str(usage))
+        second = mod._load_entries(str(usage))
+        assert calls["n"] == 1
+        assert first == second
+        assert len(first) == 1
+
+    def test_changed_file_is_reparsed(self, tmp_path, monkeypatch):
+        from burnctl.collectors import api_usage as mod
+
+        usage = tmp_path / "usage.jsonl"
+        usage.write_text(self._entry() + "\n", encoding="utf-8")
+        getattr(mod, "_ENTRIES_CACHE", {}).clear()
+
+        first = mod._load_entries(str(usage))
+        with open(str(usage), "a", encoding="utf-8") as fh:
+            fh.write(self._entry("2026-06-02T10:00:00Z") + "\n")
+        second = mod._load_entries(str(usage))
+        assert len(first) == 1
+        assert len(second) == 2

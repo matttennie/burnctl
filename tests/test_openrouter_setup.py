@@ -28,11 +28,16 @@ class TestOpenRouterSetup:
         assert setup.RC_BEGIN in first
 
     def test_ensure_shell_hook_fish(self, tmp_path):
+        # fish cannot source the POSIX env file (`export`/`unset` are not
+        # fish builtins), so the hook must set the variables natively.
         rc = tmp_path / "burnctl.fish"
         setup._ensure_shell_hook(str(rc), "fish")
         text = rc.read_text(encoding="utf-8")
-        assert "if test -f" in text
         assert setup.RC_BEGIN in text
+        assert "set -gx OPENROUTER_BASE_URL" in text
+        assert "set -e OPENAI_BASE_URL" in text
+        assert "export" not in text
+        assert "source" not in text
 
     def test_ensure_shell_hook_bash(self, tmp_path):
         rc = tmp_path / ".bashrc"

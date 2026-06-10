@@ -85,18 +85,44 @@ def _copy_pricing_table(table):
     return copied
 
 
-def _load_pricing_history():
-    if not os.path.isfile(_PRICING_HISTORY_FILE):
-        return {}
+# In-memory history cache: ((path, mtime_ns, size), history dict).
+# get_model_pricing_for_time is called per message/checkpoint by the
+# Gemini and Codex collectors, so the file must not be re-read each call.
+_PRICING_HISTORY_CACHE = None  # type: Optional[tuple]
+# (agent_id, history_file_path) pairs already snapshot-checked this process.
+_SNAPSHOT_RECORDED = set()  # type: set
+
+
+def _history_stat_key():
     try:
-        with open(_PRICING_HISTORY_FILE, encoding="utf-8") as f:
-            payload = json.load(f)
-    except (OSError, ValueError):
-        return {}
-    return payload if isinstance(payload, dict) else {}
+        st = os.stat(_PRICING_HISTORY_FILE)
+        return (_PRICING_HISTORY_FILE, st.st_mtime_ns, st.st_size)
+    except OSError:
+        return (_PRICING_HISTORY_FILE, None, None)
+
+
+def _load_pricing_history():
+    global _PRICING_HISTORY_CACHE
+    key = _history_stat_key()
+    if _PRICING_HISTORY_CACHE is not None and _PRICING_HISTORY_CACHE[0] == key:
+        return _PRICING_HISTORY_CACHE[1]
+
+    history = {}
+    if os.path.isfile(_PRICING_HISTORY_FILE):
+        try:
+            with open(_PRICING_HISTORY_FILE, encoding="utf-8") as f:
+                payload = json.load(f)
+            if isinstance(payload, dict):
+                history = payload
+        except (OSError, ValueError):
+            history = {}
+    _PRICING_HISTORY_CACHE = (key, history)
+    return history
 
 
 def _save_pricing_history(history):
+    global _PRICING_HISTORY_CACHE
+    _PRICING_HISTORY_CACHE = None
     try:
         os.makedirs(_PRICING_HISTORY_DIR, exist_ok=True)
         with open(_PRICING_HISTORY_FILE, "w", encoding="utf-8") as f:
@@ -109,6 +135,11 @@ def _save_pricing_history(history):
 def _record_pricing_snapshot(agent_id, pricing_table):
     if agent_id not in _HISTORY_TRACKED_AGENTS:
         return
+    # The static tables cannot change within a process, so one check per
+    # (agent, history file) is enough.
+    guard_key = (agent_id, _PRICING_HISTORY_FILE)
+    if guard_key in _SNAPSHOT_RECORDED:
+        return
     table = _copy_pricing_table(pricing_table)
     if not table:
         return
@@ -117,6 +148,7 @@ def _record_pricing_snapshot(agent_id, pricing_table):
     if not isinstance(rows, list):
         rows = []
     if rows and isinstance(rows[-1], dict) and rows[-1].get("pricing") == table:
+        _SNAPSHOT_RECORDED.add(guard_key)
         return
     rows.append({
         "effective_from": _snapshot_now_iso(),
@@ -124,6 +156,7 @@ def _record_pricing_snapshot(agent_id, pricing_table):
     })
     history[agent_id] = rows
     _save_pricing_history(history)
+    _SNAPSHOT_RECORDED.add(guard_key)
 
 
 def get_agent_pricing_for_time(agent_id, when=None):
@@ -188,6 +221,16 @@ def _float_or_none(value):
         return None
 
 
+def _openrouter_pricing_fallback(now):
+    """Serve the last cached table on fetch failure (empty if none)."""
+    global _OPENROUTER_PRICING_CACHE, _OPENROUTER_PRICING_CACHE_TS
+    if _OPENROUTER_PRICING_CACHE is not None:
+        return dict(_OPENROUTER_PRICING_CACHE)
+    _OPENROUTER_PRICING_CACHE = {}
+    _OPENROUTER_PRICING_CACHE_TS = now
+    return {}
+
+
 def _get_openrouter_pricing():
     global _OPENROUTER_PRICING_CACHE, _OPENROUTER_PRICING_CACHE_TS
     now = time.time()
@@ -211,26 +254,14 @@ def _get_openrouter_pricing():
         with urllib.request.urlopen(req, timeout=10) as resp:
             payload = json.loads(resp.read().decode("utf-8"))
     except (urllib.error.URLError, urllib.error.HTTPError, ValueError, OSError):
-        if _OPENROUTER_PRICING_CACHE is not None:
-            return dict(_OPENROUTER_PRICING_CACHE)
-        _OPENROUTER_PRICING_CACHE = {}
-        _OPENROUTER_PRICING_CACHE_TS = now
-        return {}
+        return _openrouter_pricing_fallback(now)
 
     if not isinstance(payload, dict):
-        if _OPENROUTER_PRICING_CACHE is not None:
-            return dict(_OPENROUTER_PRICING_CACHE)
-        _OPENROUTER_PRICING_CACHE = {}
-        _OPENROUTER_PRICING_CACHE_TS = now
-        return {}
+        return _openrouter_pricing_fallback(now)
 
     rows = payload.get("data", [])
     if not isinstance(rows, list):
-        if _OPENROUTER_PRICING_CACHE is not None:
-            return dict(_OPENROUTER_PRICING_CACHE)
-        _OPENROUTER_PRICING_CACHE = {}
-        _OPENROUTER_PRICING_CACHE_TS = now
-        return {}
+        return _openrouter_pricing_fallback(now)
 
     for row in rows:
         if not isinstance(row, dict):

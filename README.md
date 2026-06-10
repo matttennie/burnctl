@@ -55,6 +55,7 @@ burnctl -n            # no ANSI
 burnctl -t colorblind # theme: gradient | classic | colorblind | accessible
 burnctl -e            # append to burnctl.csv
 burnctl -e out.csv    # append to specific file
+burnctl -L            # live auto-refreshing dashboard (top mode)
 ```
 
 ### OpenRouter proxy

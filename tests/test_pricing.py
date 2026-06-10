@@ -153,6 +153,98 @@ class TestGetAgentPricingLocal:
         assert isinstance(result, dict)
 
 
+class TestPricingHistoryCaching:
+    """Collectors call get_model_pricing_for_time per message/checkpoint;
+    the history file must not be re-read from disk on every call."""
+
+    def _reset(self, pricing_mod):
+        if hasattr(pricing_mod, "_PRICING_HISTORY_CACHE"):
+            pricing_mod._PRICING_HISTORY_CACHE = None
+        getattr(pricing_mod, "_SNAPSHOT_RECORDED", set()).clear()
+
+    def test_repeated_lookups_read_history_file_once(self, tmp_path):
+        import burnctl.pricing as pricing_mod
+        self._reset(pricing_mod)
+
+        history_file = tmp_path / "pricing-history.json"
+        # Pre-seed with the current static table so no snapshot write occurs.
+        history_file.write_text(json.dumps({
+            "gemini": [{
+                "effective_from": "2026-01-01T00:00:00+00:00",
+                "pricing": pricing_mod._copy_pricing_table(
+                    pricing_mod.GEMINI_PRICING,
+                ),
+            }],
+        }))
+
+        when = datetime.fromisoformat("2026-06-01T00:00:00+00:00")
+        real_json_load = json.load
+        calls = {"n": 0}
+
+        def counting(fh, *args, **kwargs):
+            calls["n"] += 1
+            return real_json_load(fh, *args, **kwargs)
+
+        with patch("burnctl.pricing._PRICING_HISTORY_FILE", str(history_file)), \
+             patch("burnctl.pricing._PRICING_HISTORY_DIR", str(tmp_path)), \
+             patch("burnctl.pricing.json.load", new=counting):
+            for _ in range(5):
+                result = pricing_mod.get_model_pricing_for_time(
+                    "gemini", "gemini-2.5-pro", when,
+                )
+
+        assert result["input"] == 1.25
+        assert calls["n"] == 1
+
+    def test_snapshot_checked_once_per_process(self, tmp_path):
+        import burnctl.pricing as pricing_mod
+        self._reset(pricing_mod)
+
+        history_file = tmp_path / "pricing-history.json"
+        calls = {"n": 0}
+        real_loader = pricing_mod._load_pricing_history
+
+        def counting():
+            calls["n"] += 1
+            return real_loader()
+
+        with patch("burnctl.pricing._PRICING_HISTORY_FILE", str(history_file)), \
+             patch("burnctl.pricing._PRICING_HISTORY_DIR", str(tmp_path)), \
+             patch("burnctl.pricing._load_pricing_history", new=counting):
+            get_agent_pricing("gemini")
+            get_agent_pricing("gemini")
+
+        assert calls["n"] == 1
+
+    def test_external_history_change_invalidates_cache(self, tmp_path):
+        import burnctl.pricing as pricing_mod
+        self._reset(pricing_mod)
+
+        history_file = tmp_path / "pricing-history.json"
+        history_file.write_text(json.dumps({
+            "codex": [{
+                "effective_from": "2026-01-01T00:00:00+00:00",
+                "pricing": {"gpt-5.4": {"input": 9.0, "output": 90.0}},
+            }],
+        }))
+        when = datetime.fromisoformat("2026-06-01T00:00:00+00:00")
+
+        with patch("burnctl.pricing._PRICING_HISTORY_FILE", str(history_file)), \
+             patch("burnctl.pricing._PRICING_HISTORY_DIR", str(tmp_path)):
+            first = pricing_mod.get_agent_pricing_for_time("codex", when)
+            # Rewrite the file out-of-band: the next lookup must see it.
+            history_file.write_text(json.dumps({
+                "codex": [{
+                    "effective_from": "2026-01-01T00:00:00+00:00",
+                    "pricing": {"gpt-5.4": {"input": 4.0, "output": 40.0}},
+                }],
+            }))
+            second = pricing_mod.get_agent_pricing_for_time("codex", when)
+
+        assert first["gpt-5.4"]["input"] == 9.0
+        assert second["gpt-5.4"]["input"] == 4.0
+
+
 class TestGetAgentPricingUnknown:
     def test_returns_empty_dict(self):
         result = get_agent_pricing("unknown_agent_xyz")

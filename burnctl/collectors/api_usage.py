@@ -13,7 +13,7 @@ import urllib.request
 from datetime import datetime
 
 from burnctl import __version__ as _BURNCTL_VERSION
-from burnctl.collectors.base import BaseCollector
+from burnctl.collectors.base import BaseCollector, load_with_stat_cache
 from burnctl.openrouter_ledger import load_entries as load_openrouter_ledger
 
 _DEFAULT_USAGE_FILE = os.path.join(
@@ -96,14 +96,14 @@ def _parse_entry(line):
         return None
 
 
-def _load_entries(filepath=None):
-    """Load and parse all entries from the usage JSONL file."""
-    filepath = filepath or os.environ.get("BURNCTL_USAGE_FILE", "").strip()
-    if not filepath:
-        filepath = _DEFAULT_USAGE_FILE
-    if not os.path.isfile(filepath):
-        return []
+# Parsed-entries cache: path -> ((st_mtime_ns, st_size), entries).
+# The usage file is read at discovery, availability, and stats time
+# within a single run, and on every refresh in top-mode.
+_ENTRIES_CACHE = {}  # type: dict
 
+
+def _read_entries(filepath):
+    """Parse every entry in the usage JSONL file at *filepath*."""
     try:
         if os.path.getsize(filepath) > _MAX_FILE_BYTES:
             return []
@@ -121,6 +121,16 @@ def _load_entries(filepath=None):
         return []
 
     return entries
+
+
+def _load_entries(filepath=None):
+    """Load all entries from the usage JSONL file, cached by file state."""
+    filepath = filepath or os.environ.get("BURNCTL_USAGE_FILE", "").strip()
+    if not filepath:
+        filepath = _DEFAULT_USAGE_FILE
+    if not os.path.isfile(filepath):
+        return []
+    return load_with_stat_cache(_ENTRIES_CACHE, filepath, _read_entries)
 
 
 def _float_or(value, default=0.0):

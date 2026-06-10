@@ -11,6 +11,25 @@ from abc import ABC, abstractmethod
 MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 MiB
 
 
+def load_with_stat_cache(cache, path, loader):
+    """Return ``loader(path)``, reusing ``cache[path]`` when unchanged.
+
+    *cache* maps path -> ((st_mtime_ns, st_size), value). Used by live/top
+    mode so unchanged session files are not re-parsed on every refresh.
+    """
+    try:
+        st = os.stat(path)
+        key = (st.st_mtime_ns, st.st_size)
+    except OSError:
+        return loader(path)
+    cached = cache.get(path)
+    if cached is not None and cached[0] == key:
+        return cached[1]
+    value = loader(path)
+    cache[path] = (key, value)
+    return value
+
+
 def _check_file_size(path, limit=MAX_FILE_SIZE):
     """Return *True* if *path* is within *limit* bytes.
 

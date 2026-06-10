@@ -8,7 +8,11 @@ import json
 import os
 from datetime import datetime, timezone
 
-from burnctl.collectors.base import BaseCollector, _check_file_size
+from burnctl.collectors.base import (
+    BaseCollector,
+    _check_file_size,
+    load_with_stat_cache,
+)
 from burnctl.pricing import get_agent_pricing, get_model_pricing_for_time
 
 # Default locations for Codex CLI data
@@ -177,6 +181,15 @@ def _parse_session(filepath):
     }
 
 
+# Live/top-mode parse cache: path -> ((st_mtime_ns, st_size), parsed).
+_SESSION_PARSE_CACHE = {}  # type: dict
+
+
+def _parse_session_cached(filepath):
+    """Parse a session file, reusing the cached result when unchanged."""
+    return load_with_stat_cache(_SESSION_PARSE_CACHE, filepath, _parse_session)
+
+
 def _default_model_pricing():
     """Fallback pricing for unknown Codex/OpenAI models (per 1M tokens)."""
     return {"input": 2.50, "output": 15.0, "cache_read": 0.25}
@@ -274,8 +287,9 @@ class CodexCollector(BaseCollector):
         pricing_table = self._get_pricing_table()
 
         for path in session_files:
-            # We must use direct dict access carefully because tests mock this.
-            parsed = _parse_session(path)
+            parsed = (
+                _parse_session_cached(path) if live else _parse_session(path)
+            )
             if parsed is None:
                 continue
 
@@ -298,9 +312,11 @@ class CodexCollector(BaseCollector):
                 else _default_model_pricing()
             )
 
-            # All-time
+            # All-time and period accounting in a single checkpoint pass:
+            # each delta and its historical pricing are computed exactly once.
             a_messages += len(parsed.get("user_messages", []))
             checkpoints = sorted(parsed.get("token_checkpoints", []), key=lambda x: x[0])
+            sess_in_p = False
             prev_usage = None
             for ts, usage in checkpoints:
                 delta = _usage_delta(usage, prev_usage)
@@ -309,16 +325,11 @@ class CodexCollector(BaseCollector):
                     get_model_pricing_for_time("codex", primary_model, ts)
                     if primary_model else {}
                 )
-                a_cost += _compute_session_cost(
+                cost = _compute_session_cost(
                     delta, historical_pricing or pricing,
                 )
+                a_cost += cost
 
-            # Period
-            sess_in_p = False
-            prev_usage = None
-            for ts, usage in checkpoints:
-                delta = _usage_delta(usage, prev_usage)
-                prev_usage = usage
                 if start <= ts < end:
                     sess_in_p = True
                     in_tok = delta.get("input_tokens", 0)
@@ -328,13 +339,7 @@ class CodexCollector(BaseCollector):
 
                     p_input_tokens += non_cached
                     p_output_tokens += out_tok
-                    historical_pricing = (
-                        get_model_pricing_for_time("codex", primary_model, ts)
-                        if primary_model else {}
-                    )
-                    p_cost += _compute_session_cost(
-                        delta, historical_pricing or pricing,
-                    )
+                    p_cost += cost
 
                     if primary_model:
                         bucket = p_model_usage.setdefault(primary_model, {"inputTokens": 0, "outputTokens": 0})
@@ -481,29 +486,16 @@ class CodexCollector(BaseCollector):
         return "https://platform.openai.com/usage"
 
     def get_plan_info(self, config):
-        agent_plan = config.get("agent_plans", {}).get("codex")
-        if not agent_plan:
-            agent_plan = config.get("codex_plan")
+        from burnctl.config import CODEX_PLAN_PRICES
 
-        agent_price = config.get("agent_prices", {}).get("codex")
-        # Support the persisted flat config key used by `burnctl config`,
-        # while remaining compatible with the older nested override shape.
+        plan = config.get("agent_plans", {}).get("codex")
+        if not plan:
+            plan = config.get("codex_plan") or "free"
+        price = CODEX_PLAN_PRICES.get(plan, 0)
+
         agent_bd = config.get("agent_billing_days", {}).get("codex")
         if not agent_bd:
             agent_bd = config.get("codex_billing_day", 0)
-
-        # Tests expect specific prices for known plans
-        plan = agent_plan if agent_plan else config.get("plan", "free")
-
-        if agent_price is not None:
-            price = agent_price
-        elif plan == "plus":
-            price = 20
-        elif plan == "pro":
-            price = 200
-        else:
-            price = config.get("plan_price", 0)
-
         bd = agent_bd if agent_bd else config.get("billing_day", 1)
         return {
             "plan_name": plan,

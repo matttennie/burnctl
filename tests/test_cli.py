@@ -332,6 +332,93 @@ class TestResolveCollectors:
         assert "--alpha" in err
 
 
+class TestDefaultAgentsConfig:
+    """The documented ``default_agents`` config key narrows the no-flag
+    selection (``burnctl config default_agents claude,gemini``)."""
+
+    def _collectors(self):
+        return [
+            FakeCollector(cid="alpha", available=True),
+            FakeCollector(cid="beta", available=True),
+            FakeCollector(cid="gamma", available=True),
+        ]
+
+    def test_default_agents_narrows_selection(self):
+        from burnctl.cli import _resolve_collectors
+
+        c1, c2, c3 = self._collectors()
+        with patch("burnctl.cli.ALL_COLLECTORS", [c1, c2, c3]):
+            args = argparse.Namespace(alpha=False, beta=False, gamma=False)
+            result = _resolve_collectors(
+                args, {"default_agents": "alpha,gamma"},
+            )
+        assert result == [c1, c3]
+
+    def test_default_agents_all_keeps_everything(self):
+        from burnctl.cli import _resolve_collectors
+
+        c1, c2, c3 = self._collectors()
+        with patch("burnctl.cli.ALL_COLLECTORS", [c1, c2, c3]):
+            args = argparse.Namespace(alpha=False, beta=False, gamma=False)
+            result = _resolve_collectors(args, {"default_agents": "all"})
+        assert result == [c1, c2, c3]
+
+    def test_all_flag_overrides_default_agents(self):
+        from burnctl.cli import _resolve_collectors
+
+        c1, c2, c3 = self._collectors()
+        with patch("burnctl.cli.ALL_COLLECTORS", [c1, c2, c3]):
+            args = argparse.Namespace(
+                alpha=False, beta=False, gamma=False, all=True,
+            )
+            result = _resolve_collectors(args, {"default_agents": "alpha"})
+        assert result == [c1, c2, c3]
+
+    def test_explicit_flag_overrides_default_agents(self):
+        from burnctl.cli import _resolve_collectors
+
+        c1, c2, c3 = self._collectors()
+        with patch("burnctl.cli.ALL_COLLECTORS", [c1, c2, c3]):
+            args = argparse.Namespace(alpha=False, beta=True, gamma=False)
+            result = _resolve_collectors(args, {"default_agents": "alpha"})
+        assert result == [c2]
+
+    def test_default_agents_skips_unavailable(self):
+        from burnctl.cli import _resolve_collectors
+
+        c1 = FakeCollector(cid="alpha", available=False)
+        c2 = FakeCollector(cid="beta", available=True)
+        with patch("burnctl.cli.ALL_COLLECTORS", [c1, c2]):
+            args = argparse.Namespace(alpha=False, beta=False)
+            result = _resolve_collectors(
+                args, {"default_agents": "alpha,beta"},
+            )
+        assert result == [c2]
+
+    def test_default_agents_unknown_id_warns(self, capsys):
+        from burnctl.cli import _resolve_collectors
+
+        c1, c2, c3 = self._collectors()
+        with patch("burnctl.cli.ALL_COLLECTORS", [c1, c2, c3]):
+            args = argparse.Namespace(alpha=False, beta=False, gamma=False)
+            result = _resolve_collectors(
+                args, {"default_agents": "alpha,bogus"},
+            )
+        assert result == [c1]
+        err = capsys.readouterr().err
+        assert "bogus" in err
+
+    def test_default_agents_with_no_match_exits(self):
+        from burnctl.cli import _resolve_collectors
+
+        c1 = FakeCollector(cid="alpha", available=False)
+        with patch("burnctl.cli.ALL_COLLECTORS", [c1]):
+            args = argparse.Namespace(alpha=False)
+            with pytest.raises(SystemExit) as exc_info:
+                _resolve_collectors(args, {"default_agents": "alpha"})
+            assert exc_info.value.code == 1
+
+
 # ── _merge_config ────────────────────────────────────────────────────
 
 
@@ -385,6 +472,23 @@ class TestMergeConfig:
         config = self._base_config()
         result = _merge_config(args, config)
         assert result["billing_day"] == 25
+
+    def test_interval_alias_normalized(self):
+        # `burnctl config billing_interval yearly` normalizes; -i must too.
+        from burnctl.cli import _merge_config
+
+        args = self._make_args(interval="yearly")
+        result = _merge_config(args, self._base_config())
+        assert result["billing_interval"] == "yr"
+
+    def test_interval_invalid_exits(self, capsys):
+        from burnctl.cli import _merge_config
+
+        args = self._make_args(interval="fortnightly")
+        with pytest.raises(SystemExit) as exc_info:
+            _merge_config(args, self._base_config())
+        assert exc_info.value.code == 1
+        assert "--interval" in capsys.readouterr().err
 
     def test_theme_override(self):
         from burnctl.cli import _merge_config
@@ -1280,6 +1384,21 @@ class TestSinceUntilRender:
         assert kwargs["start_override"].year == 2025
         assert kwargs["start_override"].month == 3
         assert kwargs["start_override"].day == 1
+
+    def test_until_without_since_errors(self, capsys):
+        # --until is documented as the end of a --since range; silently
+        # ignoring it would report a different period than requested.
+        from burnctl.cli import _render_report
+
+        args = self._make_args(until="2025-01-20")
+        config = {
+            "no_color": False, "theme": "gradient",
+            "simple": False, "compact": False,
+        }
+        with pytest.raises(SystemExit) as exc_info:
+            _render_report(args, config, [FakeCollector()])
+        assert exc_info.value.code == 1
+        assert "--since" in capsys.readouterr().err
 
     def test_since_and_until_pass_both_overrides(self):
         from burnctl.cli import _render_report

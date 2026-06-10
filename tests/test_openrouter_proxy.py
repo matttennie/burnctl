@@ -1,5 +1,13 @@
-"""Tests for burnctl.openrouter_proxy helpers."""
+"""Tests for burnctl.openrouter_proxy helpers and request handler."""
 
+import email.message
+import http.client
+import json
+import threading
+from http.server import ThreadingHTTPServer
+from unittest.mock import patch
+
+from burnctl import openrouter_proxy as proxy_mod
 from burnctl.openrouter_proxy import _parse_json_usage, _parse_sse_line
 
 
@@ -143,3 +151,157 @@ class TestParseSseStream:
         record = _replay_sse(lines)
         assert record is not None
         assert record["input_tokens"] == 1
+
+
+class _FakeUpstream:
+    """Stand-in for the urllib response object returned by urlopen."""
+
+    def __init__(self, status=200, headers=None, body=b"", lines=None):
+        self.status = status
+        self.headers = email.message.Message()
+        for key, value in (headers or {}).items():
+            self.headers[key] = value
+        self._body = body
+        self._lines = list(lines or [])
+
+    def read(self):
+        return self._body
+
+    def readline(self):
+        if self._lines:
+            return self._lines.pop(0)
+        return b""
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+def _proxy_request(fake_upstream, method="POST", path="/chat/completions"):
+    """Run one request through a live _ProxyHandler with a fake upstream.
+
+    Uses a short client timeout: if the proxy fails to frame the response
+    (no Content-Length and no connection close), read() raises timeout.
+    """
+    records = []
+    with patch.object(
+        proxy_mod.urllib.request, "urlopen", return_value=fake_upstream,
+    ), patch.object(
+        proxy_mod, "append_entry",
+        lambda rec, filepath=None: records.append(rec),
+    ):
+        server = ThreadingHTTPServer(("127.0.0.1", 0), proxy_mod._ProxyHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            conn = http.client.HTTPConnection(
+                "127.0.0.1", server.server_address[1], timeout=3,
+            )
+            conn.request(
+                method, path, body=b"{}",
+                headers={"Content-Type": "application/json"},
+            )
+            resp = conn.getresponse()
+            body = resp.read()
+            headers = {k.lower(): v for k, v in resp.getheaders()}
+            status = resp.status
+            conn.close()
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=3)
+    return status, headers, body, records
+
+
+class TestProxyHandlerFraming:
+    """The proxy must tell HTTP/1.1 clients where the response body ends."""
+
+    def test_non_streaming_response_sends_content_length(self):
+        payload = json.dumps({
+            "id": "gen_1",
+            "model": "m",
+            "usage": {"prompt_tokens": 1, "completion_tokens": 2},
+        }).encode("utf-8")
+        fake = _FakeUpstream(
+            headers={"Content-Type": "application/json"}, body=payload,
+        )
+        status, headers, body, records = _proxy_request(fake)
+        assert status == 200
+        assert body == payload
+        assert int(headers["content-length"]) == len(payload)
+        assert len(records) == 1
+        assert records[0]["input_tokens"] == 1
+        assert records[0]["output_tokens"] == 2
+
+    def test_streaming_response_terminates_for_client(self):
+        lines = [
+            b'data: {"id":"g","model":"m","choices":[{"delta":{"content":"hi"}}]}\n',
+            b'\n',
+            b'data: {"usage":{"prompt_tokens":5,"completion_tokens":7}}\n',
+            b'\n',
+            b'data: [DONE]\n',
+        ]
+        fake = _FakeUpstream(
+            headers={"Content-Type": "text/event-stream"}, lines=lines,
+        )
+        status, headers, body, records = _proxy_request(fake)
+        assert status == 200
+        assert b"[DONE]" in body
+        assert len(records) == 1
+        assert records[0]["input_tokens"] == 5
+        assert records[0]["output_tokens"] == 7
+
+    def test_upstream_http_error_passes_through_with_length(self):
+        error_body = b'{"error": {"message": "bad request"}}'
+
+        def _raise(*args, **kwargs):
+            import urllib.error
+            hdrs = email.message.Message()
+            hdrs["Content-Type"] = "application/json"
+            raise urllib.error.HTTPError(
+                "https://openrouter.ai/api/v1/chat/completions",
+                400, "Bad Request", hdrs,
+                _BytesReader(error_body),
+            )
+
+        records = []
+        with patch.object(
+            proxy_mod.urllib.request, "urlopen", side_effect=_raise,
+        ), patch.object(
+            proxy_mod, "append_entry",
+            lambda rec, filepath=None: records.append(rec),
+        ):
+            server = ThreadingHTTPServer(
+                ("127.0.0.1", 0), proxy_mod._ProxyHandler,
+            )
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                conn = http.client.HTTPConnection(
+                    "127.0.0.1", server.server_address[1], timeout=3,
+                )
+                conn.request("POST", "/chat/completions", body=b"{}")
+                resp = conn.getresponse()
+                body = resp.read()
+                status = resp.status
+                conn.close()
+            finally:
+                server.shutdown()
+                server.server_close()
+                thread.join(timeout=3)
+        assert status == 400
+        assert body == error_body
+        assert records == []
+
+
+class _BytesReader:
+    def __init__(self, data):
+        self._data = data
+
+    def read(self):
+        return self._data
+
+    def close(self):
+        pass

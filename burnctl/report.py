@@ -419,10 +419,8 @@ def aggregate_stats(
         period_cost = stats.get("period_cost", 0.0)
         alltime_cost = stats.get("alltime_cost", 0.0)
         messages = stats.get("messages", 0)
-        sessions = stats["sessions"] if "sessions" in stats else 0
-        total_sessions = (
-            stats["total_sessions"] if "total_sessions" in stats else 0
-        )
+        sessions = stats.get("sessions", 0)
+        total_sessions = stats.get("total_sessions", 0)
 
         if plan_price > 0:
             pace_pct = period_cost / plan_price * 100
@@ -912,9 +910,6 @@ def render_full(stats, simple=False, use_color=True, theme="gradient"):
         lines.append(box_sep_light())
         lines.append(box_title("MODEL BREAKDOWN"))
         lines.append(box_empty())
-
-        _CH_FILL = "\u2593"
-        _CH_EMPTY = "\u2591"
 
         for a in agents_with_models:
             lines.append(

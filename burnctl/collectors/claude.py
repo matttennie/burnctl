@@ -13,7 +13,7 @@ from collections import defaultdict
 from datetime import datetime
 
 from burnctl.collectors.base import BaseCollector, _check_file_size
-from burnctl.config import PLAN_PRICES, ANNUAL_PRICES
+from burnctl.config import ANNUAL_PRICES, CONFIG_FILE, PLAN_PRICES
 
 CLAUDE_DIR = os.path.join(os.path.expanduser("~"), ".claude")
 STATS_FILE = os.path.join(CLAUDE_DIR, "stats-cache.json")
@@ -347,17 +347,16 @@ class ClaudeCollector(BaseCollector):
             if not plan:
                 plan = config.get("claude_plan", "free")
 
-        # Warn if using the default and the user never set it
+        # Warn if using the default and the user never set it.  The merged
+        # *config* dict always contains the default key, so the saved file
+        # itself must be inspected to tell "explicitly free" from "unset".
         if plan == "free" and not from_env:
-            cfg_file = os.path.join(
-                os.path.expanduser("~"), ".config", "burnctl", "config.json",
-            )
             explicitly_set = False
             try:
-                if os.path.getsize(cfg_file) > 1024 * 1024:
+                if os.path.getsize(CONFIG_FILE) > 1024 * 1024:
                     pass  # oversized config — treat as not explicitly set
                 else:
-                    with open(cfg_file, encoding="utf-8") as f:
+                    with open(CONFIG_FILE, encoding="utf-8") as f:
                         saved = json.load(f)
                     explicitly_set = (
                         "claude_plan" in saved
