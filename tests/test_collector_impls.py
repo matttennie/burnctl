@@ -1984,6 +1984,45 @@ class TestApiUsageParseEntry:
         assert result["input_tokens"] == 0
 
 
+class TestApiUsageCollectorFileResolution:
+    """Regression: the default-fallback path must resolve without NameError.
+
+    An earlier refactor renamed ``USAGE_FILE`` to ``_DEFAULT_USAGE_FILE`` but
+    left a stale reference in ``_file``; any caller that did not pass
+    ``usage_file`` would crash at runtime. Every existing test passed an
+    explicit path and so missed the regression.
+    """
+
+    def test_file_falls_back_to_default_when_not_given(self, tmp_path, monkeypatch):
+        from burnctl.collectors import api_usage as mod
+        monkeypatch.setattr(mod, "_DEFAULT_USAGE_FILE", str(tmp_path / "default.jsonl"))
+        monkeypatch.delenv("BURNCTL_USAGE_FILE", raising=False)
+        collector = ApiUsageCollector("openrouter", "OpenRouter")
+        assert collector._file == str(tmp_path / "default.jsonl")
+
+    def test_file_honours_explicit_usage_file_argument(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("BURNCTL_USAGE_FILE", str(tmp_path / "env.jsonl"))
+        explicit = str(tmp_path / "explicit.jsonl")
+        collector = ApiUsageCollector("openrouter", "OpenRouter", usage_file=explicit)
+        assert collector._file == explicit
+
+    def test_file_honours_burnctl_usage_file_env_var(self, tmp_path, monkeypatch):
+        target = str(tmp_path / "from-env.jsonl")
+        monkeypatch.setenv("BURNCTL_USAGE_FILE", target)
+        collector = ApiUsageCollector("openrouter", "OpenRouter")
+        assert collector._file == target
+
+    def test_is_available_does_not_raise_with_default_file(self, monkeypatch, tmp_path):
+        # Full end-to-end exercise of the previously-broken path: no explicit
+        # usage_file, no env var, just an unavailable default. Must return
+        # False gracefully, not crash with NameError.
+        from burnctl.collectors import api_usage as mod
+        monkeypatch.setattr(mod, "_DEFAULT_USAGE_FILE", str(tmp_path / "missing.jsonl"))
+        monkeypatch.delenv("BURNCTL_USAGE_FILE", raising=False)
+        collector = ApiUsageCollector("openrouter", "OpenRouter")
+        assert collector.is_available() is False
+
+
 class TestApiUsageCollectorAvailability:
     """is_available checks whether the usage JSONL file has matching entries."""
 

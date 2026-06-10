@@ -180,12 +180,14 @@ def load():
             for key in DEFAULTS:
                 if key not in saved:
                     continue
-                if isinstance(DEFAULTS[key], dict) and isinstance(saved[key], dict):
-                    merged = dict(DEFAULTS[key])
-                    merged.update(saved[key])
+                default_val = DEFAULTS[key]
+                saved_val = saved[key]
+                if isinstance(default_val, dict) and isinstance(saved_val, dict):
+                    merged = dict(default_val)
+                    merged.update(saved_val)
                     config[key] = merged
                 else:
-                    config[key] = saved[key]
+                    config[key] = saved_val
         except json.JSONDecodeError:
             print(
                 "Warning: config file is malformed, using defaults.",

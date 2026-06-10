@@ -13,7 +13,6 @@ Reads local session data plus provider APIs you already use, then shows tokens, 
 | Codex CLI | `~/.codex/sessions/*.jsonl` |
 | OpenRouter | OpenRouter activity API + local request ledger |
 | HuggingFace et al. | `~/.config/burnctl/usage.jsonl` |
-| Ollama | Detection only, $0 |
 | OpenCode | Stub — PRs welcome |
 
 ## Install
@@ -28,7 +27,6 @@ Local checkout:
 git clone https://github.com/matttennie/burnctl.git
 cd burnctl
 python -m pip install -U .
-python -m pip install -U ".[claude]"   # pulls claude-usage for tighter pricing
 ```
 
 Manual page:
@@ -108,7 +106,7 @@ burnctl/
 ├── pricing.py            # per-model rate tables
 ├── report.py             # aggregation + rendering
 ├── openrouter_ledger.py  # local request ledger
-├── openrouter_proxy.py   # MITM-lite for OpenRouter
+├── openrouter_proxy.py   # local logging proxy for OpenRouter
 ├── openrouter_setup.py   # LaunchAgent + shell bootstrap
 └── collectors/
     ├── base.py           # ABC
@@ -116,7 +114,7 @@ burnctl/
     ├── gemini.py
     ├── codex.py
     ├── api_usage.py      # OpenRouter, HuggingFace, etc.
-    ├── local.py          # Ollama
+    ├── local.py          # local-model detection stub
     └── stubs.py          # OpenCode
 ```
 

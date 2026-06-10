@@ -600,8 +600,8 @@ def _openrouter_activity_note(stats):
             break
     if uses_ledger:
         return (
-            "OpenRouter source: provider daily activity aggregates through %s UTC plus local request ledger after that cutoff."
-            % latest_day
+            "OpenRouter source: provider daily activity aggregates through %s UTC "
+            "plus local request ledger after that cutoff." % latest_day
         )
     return (
         "OpenRouter source: provider daily activity aggregates through %s UTC; current UTC day is not live."
@@ -1208,7 +1208,8 @@ def render_accessible(stats):
                 f"  Period API-equivalent cost: ~{fmt_usd(a['period_cost'])}"
             )
             lines.append(
-                "  Cost note: estimated from all-time Claude model ratios because period input/cache token totals are unavailable."
+                "  Cost note: estimated from all-time Claude model ratios "
+                "because period input/cache token totals are unavailable."
             )
         else:
             lines.append(

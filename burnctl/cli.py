@@ -7,7 +7,7 @@ from shlex import quote
 
 from burnctl import __version__
 from burnctl.collectors import ALL_COLLECTORS
-from burnctl.config import DEFAULTS, PUBLIC_GLOBAL_KEYS, THEMES
+from burnctl.config import PUBLIC_GLOBAL_KEYS, THEMES
 from burnctl.openrouter_setup import (
     PROXY_HOST,
     PROXY_PORT,

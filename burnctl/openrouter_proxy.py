@@ -31,23 +31,30 @@ def _now_utc():
 
 
 def _parse_json_usage(payload):
-    """Extract a ledger record from a non-streaming JSON payload."""
+    """Extract a ledger record from a non-streaming JSON payload.
+
+    Returns None when the payload carries no usage information — required so
+    streamed SSE chunks without a final ``usage`` object do not overwrite the
+    real ledger record with a zeroed one.
+    """
     if not isinstance(payload, dict):
         return None
-    usage = payload.get("usage", {})
-    if not isinstance(usage, dict):
+    usage = payload.get("usage")
+    if not isinstance(usage, dict) or not usage:
         return None
+
     prompt = int(usage.get("prompt_tokens", 0) or 0)
     completion = int(usage.get("completion_tokens", 0) or 0)
-    reasoning = int(
-        usage.get("reasoning_tokens", 0)
-        or usage.get("completion_tokens_details", {}).get("reasoning_tokens", 0)
-        if isinstance(usage.get("completion_tokens_details"), dict)
-        else 0
-    )
-    cost = payload.get("usage", {}).get("cost")
+    reasoning = int(usage.get("reasoning_tokens", 0) or 0)
+    if not reasoning:
+        details = usage.get("completion_tokens_details")
+        if isinstance(details, dict):
+            reasoning = int(details.get("reasoning_tokens", 0) or 0)
+
+    cost = usage.get("cost")
     if cost is None:
         cost = payload.get("cost")
+
     return {
         "ts": _now_utc(),
         "provider": "openrouter",
@@ -85,20 +92,6 @@ def _parse_sse_line(raw, current_model="unknown", current_id=""):
         return maybe, model, request_id
 
     return None, model, request_id
-
-
-def _parse_sse_usage(lines):
-    """Extract a ledger record from streamed SSE lines if usage appears.
-    (Kept for backward compatibility and testing).
-    """
-    record = None
-    model = "unknown"
-    request_id = ""
-    for raw in lines:
-        maybe, model, request_id = _parse_sse_line(raw, model, request_id)
-        if maybe:
-            record = maybe
-    return record
 
 
 class _ProxyHandler(BaseHTTPRequestHandler):

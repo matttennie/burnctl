@@ -43,7 +43,6 @@ jobs:
       - name: Test graceful handling without agent data
         shell: bash
         run: |
-          burnctl --aider 2>&1 || true
           burnctl -j 2>&1 || true
           burnctl -c 2>&1 || true
           burnctl -A 2>&1 || true
@@ -66,3 +65,22 @@ jobs:
 
       - name: Type check with mypy
         run: mypy burnctl/
+
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install build tooling
+        run: pip install build twine
+
+      - name: Build sdist and wheel
+        run: python -m build
+
+      - name: Validate package metadata
+        run: twine check dist/*

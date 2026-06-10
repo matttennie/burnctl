@@ -11,8 +11,6 @@ import os
 from datetime import datetime
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from burnctl.collectors.base import MAX_FILE_SIZE, _check_file_size
 from burnctl.collectors.claude import ClaudeCollector
 from burnctl.collectors.codex import (

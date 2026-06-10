@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `ApiUsageCollector._file` referenced the old `USAGE_FILE` constant after the Orchard removal — any caller that did not pass an explicit `usage_file` would hit a `NameError` at runtime
+- OpenRouter proxy `_parse_json_usage` wrote zero-token ledger records for streamed SSE chunks that contained no `usage` object, overwriting the real record on non-final frames
+- OpenRouter proxy `_parse_json_usage` ignored a top-level `reasoning_tokens` field when `completion_tokens_details` was absent
+- Stale `User-Agent: burnctl/0.1.0` in OpenRouter and pricing HTTP clients; now derives from `burnctl.__version__`
+- `pyproject.toml` `keywords` was misplaced under `[project.optional-dependencies]`, producing a phantom `burnctl[keywords]` extra and no real keyword metadata
+- `pyproject.toml` `[claude]` extra pointed at `claude-usage`, which is not on PyPI; the README install step would fail for every public user
+- Dangling lint, type, and long-line issues surfaced by the post-Orchard/post-Aider refactors
+
+### Changed
+
+- Upgraded project classifier from Alpha to Beta to reflect shipping maturity
+- `.pre-commit-config.yaml` now also runs mypy so local hooks match CI enforcement
+- `.flake8` no longer blanket-suppresses `E501`/`F541` inside `burnctl/report.py`
+- Dropped the `_parse_sse_usage` helper in favour of streaming `_parse_sse_line` directly; tests exercise the same replay path the request handler uses
+
 ## [0.3.2] - 2026-04-19
 
 ### Added

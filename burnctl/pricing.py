@@ -12,6 +12,8 @@ import urllib.error
 import urllib.request
 from datetime import datetime, timezone
 
+from burnctl import __version__ as _BURNCTL_VERSION
+
 # ── Gemini (per-million-token rates, USD) ────────────────────────
 
 GEMINI_PRICING = {
@@ -197,7 +199,7 @@ def _get_openrouter_pricing():
 
     headers = {
         "Accept": "application/json",
-        "User-Agent": "burnctl/0.1.0",
+        "User-Agent": "burnctl/" + _BURNCTL_VERSION,
     }
     api_key = _openrouter_api_key()
     if api_key:

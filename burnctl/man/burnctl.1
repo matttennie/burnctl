@@ -3,7 +3,7 @@
 burnctl \- unified AI coding agent usage dashboard
 .SH SYNOPSIS
 .B burnctl
-[\fIOPTIONS\fR] [\fIPROMPT\fR]
+[\fIOPTIONS\fR]
 .br
 .B burnctl
 [\fIOPTIONS\fR] \fICOMMAND\fR [\fIARGS\fR]
@@ -112,6 +112,14 @@ Examples:
 .TP
 .B burnctl upgrade
 Open provider billing or upgrade pages in the default browser.
+.br
+Example:
+.RS
+.PP
+\fBburnctl upgrade claude\fR
+.PP
+\fBburnctl upgrade --all\fR
+.RE
 .TP
 .B burnctl setup openrouter
 Install or inspect one-time OpenRouter live-tracking integration.

@@ -11,7 +11,6 @@ from unittest.mock import patch
 
 from burnctl.pricing import (
     get_agent_pricing,
-    get_agent_pricing_for_time,
     get_model_pricing_for_time,
     GEMINI_PRICING,
     OPENAI_PRICING,

@@ -148,7 +148,9 @@ def _parse_session(filepath):
                     content = payload.get("content")
                     if isinstance(content, list):
                         for part in content:
-                            if isinstance(part, dict) and part.get("type") in ("tool_use", "function_call", "tool_call"):
+                            if isinstance(part, dict) and part.get("type") in (
+                                "tool_use", "function_call", "tool_call"
+                            ):
                                 tool_calls_count += 1
 
     except OSError:
@@ -290,7 +292,11 @@ class CodexCollector(BaseCollector):
 
             models = parsed.get("models", set())
             primary_model = sorted(models)[0] if models else None
-            pricing = pricing_table.get(primary_model, _default_model_pricing()) if primary_model else _default_model_pricing()
+            pricing = (
+                pricing_table.get(primary_model, _default_model_pricing())
+                if primary_model
+                else _default_model_pricing()
+            )
 
             # All-time
             a_messages += len(parsed.get("user_messages", []))
@@ -420,7 +426,7 @@ class CodexCollector(BaseCollector):
         last_dt = None
         p_msgs = 0
         p_sids = set()
-        p_daily = {}
+        p_daily = {}  # type: dict
 
         try:
             with open(HISTORY_FILE, "r", encoding="utf-8", errors="replace") as fh:

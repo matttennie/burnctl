@@ -11,9 +11,10 @@ license = {text = "MIT"}
 authors = [{name = "Matthew Tennie", email = "4433555+matttennie@users.noreply.github.com"}]
 requires-python = ">=3.8"
 dependencies = []
+keywords = ["ai", "usage", "dashboard", "cli", "claude", "gemini", "codex"]
 
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 4 - Beta",
     "Environment :: Console",
     "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",
@@ -28,10 +29,6 @@ classifiers = [
     "Topic :: Software Development :: Quality Assurance",
     "Topic :: Utilities",
 ]
-
-[project.optional-dependencies]
-claude = ["claude-usage>=0.1.0"]
-keywords = ["ai", "usage", "dashboard", "cli", "claude", "gemini", "codex"]
 
 [project.urls]
 Homepage = "https://github.com/matttennie/burnctl"
@@ -51,6 +48,8 @@ burnctl = ["man/*.1"]
 [project.scripts]
 burnctl = "burnctl.cli:main"
 
+# mypy's minimum target is 3.9; the repo still supports 3.8 via vermin (CI
+# runs `vermin --target=3.8-` in a separate job for syntax-level compat).
 [tool.mypy]
 python_version = "3.9"
 warn_return_any = true

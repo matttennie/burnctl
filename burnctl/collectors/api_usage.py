@@ -10,8 +10,9 @@ import sys
 from typing import Dict, List
 import urllib.error
 import urllib.request
-from datetime import datetime, timezone
+from datetime import datetime
 
+from burnctl import __version__ as _BURNCTL_VERSION
 from burnctl.collectors.base import BaseCollector
 from burnctl.openrouter_ledger import load_entries as load_openrouter_ledger
 
@@ -161,7 +162,7 @@ def _openrouter_get_json(path, api_key, timeout=10):
         headers={
             "Authorization": "Bearer " + api_key,
             "Accept": "application/json",
-            "User-Agent": "burnctl/0.1.0",
+            "User-Agent": "burnctl/" + _BURNCTL_VERSION,
         },
     )
     with urllib.request.urlopen(req, timeout=timeout) as resp:
@@ -355,7 +356,11 @@ class ApiUsageCollector(BaseCollector):
 
     @property
     def _file(self):
-        return self._usage_file or USAGE_FILE
+        return (
+            self._usage_file
+            or os.environ.get("BURNCTL_USAGE_FILE", "").strip()
+            or _DEFAULT_USAGE_FILE
+        )
 
     @property
     def name(self):
