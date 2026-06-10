@@ -33,7 +33,7 @@ def _build_parser():
             "                    + output_tokens * output_rate\n"
             "                    + cache_read_tokens * cache_read_rate\n"
             "                    + cache_create_tokens * cache_create_rate) / 1M\n"
-            "  Value Ratio     = all-time API value / (plan_price * months_active)\n"
+            "  Value Ratio     = period API value / plan price (current billing cycle)\n"
             "\n"
             "manual:\n"
             "  man burnctl\n"
@@ -82,13 +82,13 @@ def _build_parser():
         "-s", "--simple",
         dest="simple",
         action="store_true",
-        help="Show period usage only (hide all-time VALUE & ROI)",
+        help="Show period usage only (hide the VALUE & ROI section)",
     )
     fmt_group.add_argument(
         "--detailed",
         dest="simple",
         action="store_false",
-        help="Re-enable the all-time VALUE & ROI section for this run",
+        help="Re-enable the VALUE & ROI section for this run",
     )
     fmt_group.add_argument(
         "--color",

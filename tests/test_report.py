@@ -399,11 +399,26 @@ class TestAggregateStats:
         assert len(result["agents"]) == 1
         assert result["agents"][0].get("inactive") is True
 
-    def test_value_ratio_with_first_session(self):
+    def test_value_ratio_is_period_scoped(self):
+        # ROI only matters for the billing cycle: subscription levels change
+        # over time, so an all-time ratio against the current price is wrong.
+        c = _make_collector(
+            plan_price=20.0,
+            stats={"period_cost": 50.0, "alltime_cost": 120.0},
+        )
+        ref = datetime(2025, 1, 16)
+        result = aggregate_stats([c], {}, ref_date=ref)
+
+        agent = result["agents"][0]
+        # value_ratio = period_cost / plan_price = 50 / 20 = 2.5
+        assert agent["value_ratio"] == 2.5
+
+    def test_value_ratio_ignores_alltime_and_first_session(self):
         c = _make_collector(
             plan_price=20.0,
             stats={
-                "alltime_cost": 120.0,
+                "period_cost": 100.0,
+                "alltime_cost": 9999.0,
                 "first_session": "2024-07-16",
             },
         )
@@ -411,46 +426,28 @@ class TestAggregateStats:
         result = aggregate_stats([c], {}, ref_date=ref)
 
         agent = result["agents"][0]
-        # months_active = (2025-2024)*12 + (1-7) = 6
-        # total_paid = 20 * 6 = 120
-        # value_ratio = 120 / 120 = 1.0
-        assert agent["value_ratio"] == 1.0
+        # value_ratio = 100 / 20 = 5.0, regardless of history length
+        assert agent["value_ratio"] == 5.0
 
     def test_value_ratio_zero_plan_price(self):
         c = _make_collector(
             plan_price=0,
-            stats={"alltime_cost": 50.0, "first_session": "2024-06-01"},
+            stats={"period_cost": 50.0, "first_session": "2024-06-01"},
         )
         ref = datetime(2025, 1, 16)
         result = aggregate_stats([c], {}, ref_date=ref)
 
         assert result["agents"][0]["value_ratio"] == 0.0
 
-    def test_value_ratio_invalid_first_session(self):
+    def test_value_ratio_zero_period_cost(self):
         c = _make_collector(
             plan_price=20.0,
-            stats={"alltime_cost": 100.0, "first_session": "not-a-date"},
+            stats={"period_cost": 0.0, "alltime_cost": 500.0},
         )
         ref = datetime(2025, 1, 16)
         result = aggregate_stats([c], {}, ref_date=ref)
 
-        agent = result["agents"][0]
-        # ValueError caught, months_active=1, total_paid=20
-        # value_ratio = 100 / 20 = 5.0
-        assert agent["value_ratio"] == 5.0
-
-    def test_value_ratio_empty_first_session(self):
-        c = _make_collector(
-            plan_price=20.0,
-            stats={"alltime_cost": 60.0, "first_session": ""},
-        )
-        ref = datetime(2025, 1, 16)
-        result = aggregate_stats([c], {}, ref_date=ref)
-
-        agent = result["agents"][0]
-        # first_session empty: months_active=1, total_paid=20
-        # value_ratio = 60 / 20 = 3.0
-        assert agent["value_ratio"] == 3.0
+        assert result["agents"][0]["value_ratio"] == 0.0
 
     def test_pace_pct_calculation(self):
         c = _make_collector(
@@ -1179,8 +1176,9 @@ class TestRenderAccessible:
     def test_includes_value_info(self):
         stats = _make_stats()
         result = render_accessible(stats)
-        assert "All-time API value: $150.00" in result
-        assert "Value ratio: 1.1x" in result
+        # ROI is scoped to the billing cycle; no all-time ratio is shown.
+        assert "Cycle value ratio: 1.1x" in result
+        assert "All-time API value" not in result
 
     def test_includes_billing_period(self):
         stats = _make_stats()
@@ -2152,7 +2150,7 @@ class TestAggregateStatsEdgeCases:
         assert math.isnan(agent["period_cost"])
 
     def test_nan_in_alltime_cost(self):
-        """NaN in alltime_cost should produce NaN value_ratio without crash."""
+        """NaN in alltime_cost must not poison the period-scoped ratio."""
         c = _make_collector(
             plan_price=20.0,
             stats={
@@ -2166,7 +2164,8 @@ class TestAggregateStatsEdgeCases:
 
         agent = result["agents"][0]
         assert math.isnan(agent["alltime_cost"])
-        assert math.isnan(agent["value_ratio"])
+        # value_ratio is period_cost / plan_price = 10 / 20
+        assert agent["value_ratio"] == 0.5
 
 
 # ── _diff_str edge cases ────────────────────────────────────────

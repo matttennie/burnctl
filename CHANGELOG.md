@@ -33,6 +33,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- VALUE & ROI is now scoped to the current billing cycle: API Value shows
+  the period's API-equivalent value and Value Ratio divides it by the plan
+  price for that cycle. The all-time ratio was dropped because subscription
+  levels change over time, making an all-time ratio against the current
+  price incorrect. `alltime_cost` is still exported in JSON and CSV
 - Gemini and Codex collectors now cache parsed session files by
   (mtime, size) in top-mode, implementing the stale-file optimization the
   0.3.2 notes claimed; unchanged files are no longer re-parsed every refresh

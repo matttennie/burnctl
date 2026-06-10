@@ -432,24 +432,12 @@ def aggregate_stats(
         else:
             projected_cost = 0.0
 
-        # Value ratio: how much API-equivalent value vs total paid
+        # Value ratio: this cycle's API-equivalent value vs this cycle's
+        # plan price.  Scoped to the billing period because subscription
+        # levels change over time — an all-time ratio against the current
+        # price would be wrong.
         first_session = stats.get("first_session", "")
-        if first_session and plan_price > 0:
-            try:
-                fs_dt = datetime.strptime(first_session, "%Y-%m-%d")
-                months_active = max(
-                    1,
-                    (ref_date.year - fs_dt.year) * 12
-                    + ref_date.month - fs_dt.month,
-                )
-            except ValueError:
-                months_active = 1
-            total_paid = plan_price * months_active
-        else:
-            months_active = 1
-            total_paid = plan_price if plan_price > 0 else 0
-
-        value_ratio = alltime_cost / total_paid if total_paid > 0 else 0.0
+        value_ratio = period_cost / plan_price if plan_price > 0 else 0.0
 
         agent_data = {
             "id": collector.id,
@@ -856,15 +844,20 @@ def render_full(stats, simple=False, use_color=True, theme="gradient"):
         ),
     )
 
-    # ── VALUE & ROI ──
+    # ── VALUE & ROI (current billing cycle) ──
     if not simple:
         lines.append(box_sep_light())
-        lines.append(box_title("VALUE & ROI"))
+        lines.append(box_title("VALUE & ROI (THIS CYCLE)"))
         lines.append(box_empty())
         lines.append(
             _row_bold(
                 "API Value",
-                [fmt_usd(a["alltime_cost"]) for a in agents],
+                [
+                    ("~" + fmt_usd(a["period_cost"]))
+                    if a.get("period_cost_estimated")
+                    else fmt_usd(a["period_cost"])
+                    for a in agents
+                ],
             ),
         )
         # Value ratio bars
@@ -1211,9 +1204,9 @@ def render_accessible(stats):
                 f"  Period API-equivalent cost: {fmt_usd(a['period_cost'])}",
             )
         lines.append(
-            f"  All-time API value: {fmt_usd(a['alltime_cost'])}",
+            f"  Cycle value ratio: {a['value_ratio']:.1f}x "
+            "(period API value / plan price)"
         )
-        lines.append(f"  Value ratio: {a['value_ratio']:.1f}x")
         lines.append(f"  First session: {a['first_session']}")
         lines.append(f"  Last active: {a['last_active']}")
         lines.append(
