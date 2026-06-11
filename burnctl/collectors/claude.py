@@ -120,6 +120,11 @@ class ClaudeCollector(BaseCollector):
         activity = defaultdict(_new_day)  # type: dict
         model_tokens = defaultdict(lambda: defaultdict(int))  # type: dict
         model_delta = defaultdict(lambda: defaultdict(int))  # type: dict
+        # One assistant message streams across several JSONL lines (one per
+        # content block, sometimes mirrored into sidechain transcripts),
+        # each repeating the same message-level usage. Usage counts once
+        # per message id; tool_use blocks are distinct per line.
+        seen_msg_ids = set()  # type: set
 
         cutoff_epoch = datetime.strptime(cutoff_date, "%Y-%m-%d").timestamp()
 
@@ -172,6 +177,12 @@ class ClaudeCollector(BaseCollector):
                                     )
                                 else:
                                     cache_create = 0
+                                msg_id = msg.get("id", "")
+                                if msg_id:
+                                    if msg_id in seen_msg_ids:
+                                        out_tok = 0
+                                    else:
+                                        seen_msg_ids.add(msg_id)
                                 if model and out_tok:
                                     model_tokens[day][model] += out_tok
                                     model_delta[model]["outputTokens"] += out_tok

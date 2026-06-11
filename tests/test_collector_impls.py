@@ -524,6 +524,50 @@ class TestClaudeScanSessionsAfter:
         assert delta["claude-opus-4-6"]["inputTokens"] == 10
         assert delta["claude-opus-4-6"]["cacheCreationInputTokens"] == 200
 
+    def test_streamed_message_usage_counted_once(self, tmp_path):
+        # Claude Code streams one assistant message across several JSONL
+        # lines (one per content block); every line repeats the same
+        # message-level usage. Token usage must count once per message id;
+        # tool_use blocks still count per line (blocks are distinct).
+        def line(msg_id, block, ts="2026-03-12T10:00:01.000Z"):
+            return {
+                "type": "assistant",
+                "timestamp": ts,
+                "sessionId": "s1",
+                "message": {
+                    "id": msg_id,
+                    "model": "claude-opus-4-6",
+                    "role": "assistant",
+                    "content": [block],
+                    "usage": {"input_tokens": 10, "output_tokens": 100},
+                },
+            }
+
+        entries = [
+            line("msg_1", {"type": "text", "text": "a"}),
+            line("msg_1", {"type": "tool_use", "name": "Bash"}),
+            line("msg_1", {"type": "text", "text": "b"}),
+        ]
+        entries.append(line("msg_2", {"type": "text", "text": "c"}))
+        entries[-1]["message"]["usage"] = {"input_tokens": 5, "output_tokens": 50}
+        self._make_session_file(tmp_path, entries)
+
+        # The same message id appearing in a second file (e.g. a sidechain
+        # transcript copy) must not double-count either.
+        proj2 = tmp_path / "projects" / "test-project" / "sub" / "subagents"
+        proj2.mkdir(parents=True)
+        (proj2 / "agent-xyz.jsonl").write_text(
+            json.dumps(line("msg_1", {"type": "text", "text": "a"})) + "\n"
+        )
+
+        with patch("burnctl.collectors.claude.PROJECTS_DIR", str(tmp_path / "projects")):
+            act, tok, delta = ClaudeCollector._scan_sessions_after("2026-03-11", "2026-03-13")
+
+        assert tok[0]["tokensByModel"]["claude-opus-4-6"] == 150
+        assert delta["claude-opus-4-6"]["outputTokens"] == 150
+        assert delta["claude-opus-4-6"]["inputTokens"] == 15
+        assert act[0]["toolCallCount"] == 1
+
     def test_counts_tool_use_blocks(self, tmp_path):
         entries = [
             {
