@@ -38,3 +38,4 @@ htmlcov/
 .coverage
 coverage.xml
 .fwens/
+.claude/
