@@ -37,3 +37,4 @@ CLAUDE.md
 htmlcov/
 .coverage
 coverage.xml
+.fwens/
