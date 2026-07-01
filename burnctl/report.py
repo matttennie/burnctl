@@ -37,7 +37,7 @@ _CLAUDE_GRAD = [
     (193, 95, 60), (206, 107, 73), (218, 119, 86),
     (222, 115, 86), (232, 140, 105), (244, 180, 148),
 ]
-# Gemini: blue → purple → soft lavender
+# Antigravity/Gemini: blue → purple → soft lavender
 _GEMINI_GRAD = [
     (66, 133, 244), (120, 93, 239), (147, 51, 234),
     (172, 102, 243), (211, 227, 253),
@@ -67,6 +67,7 @@ _TITLE_COLOR = (120, 140, 165)
 
 _AGENT_GRADIENTS = {
     "claude": _CLAUDE_GRAD,
+    "antigravity": _GEMINI_GRAD,
     "gemini": _GEMINI_GRAD,
     "codex": _CODEX_GRAD,
     "openrouter": _OPENROUTER_GRAD,
@@ -221,12 +222,12 @@ class _MultiAgentTheme:
 
     # ── Agent-aware methods ──
     def agent_name(self, text, agent_id):
-        """Color agent name — gradient for Gemini, solid primary for others."""
+        """Color agent name — gradient for Gemini/Antigravity, solid primary for others."""
         if not self.enabled:
             return str(text)
         grad = _agent_gradient(agent_id)
-        # Only Gemini gets the text gradient
-        if "gemini" in agent_id.lower() and len(grad) >= 2:
+        # Only Gemini/Antigravity gets the text gradient
+        if ("gemini" in agent_id.lower() or "antigravity" in agent_id.lower()) and len(grad) >= 2:
             n = max(len(text) - 1, 1)
             segs = len(grad) - 1
             parts = []
@@ -297,7 +298,7 @@ def _safe_replace_day(dt, day):
     return dt.replace(day=min(day, max_day))
 
 
-def compute_period(billing_day, offset=0):
+def compute_period(billing_day, offset=0, ref_date=None):
     """Compute billing period boundaries.
 
     Parameters
@@ -306,13 +307,15 @@ def compute_period(billing_day, offset=0):
         Day of the month when the billing period starts.
     offset : int
         ``0`` for the current period, ``-1`` for the previous one, etc.
+    ref_date : datetime | None
+        Reference date (defaults to datetime.now()).
 
     Returns
     -------
     tuple[datetime, datetime, datetime]
         ``(start, end, today_dt)`` as naive :class:`datetime` objects.
     """
-    now = datetime.now()
+    now = ref_date if ref_date is not None else datetime.now()
     today_dt = datetime(now.year, now.month, now.day)
 
     if offset != 0:
@@ -440,7 +443,7 @@ def aggregate_stats(
                 start, end = custom
                 today_dt = datetime(ref_date.year, ref_date.month, ref_date.day)
             else:
-                start, end, today_dt = compute_period(billing_day, offset)
+                start, end, today_dt = compute_period(billing_day, offset, ref_date=ref_date)
 
         hide_when_empty = getattr(collector, "hide_when_empty", False)
         if not isinstance(hide_when_empty, bool):
@@ -516,6 +519,7 @@ def aggregate_stats(
             "alltime_cost": round(alltime_cost, 2),
             "value_ratio": round(value_ratio, 1),
             "model_usage": stats.get("model_usage", {}),
+            "alltime_model_usage": stats.get("alltime_model_usage", {}),
             "first_session": first_session,
             "last_active": stats.get("last_active", ""),
             "total_messages": stats.get("total_messages", 0),
@@ -600,7 +604,7 @@ def _strip_ansi(text):
 
 _TOP_REPORT_AGENT_IDS = {
     "claude",
-    "gemini",
+    "antigravity",
     "codex",
     "openrouter",
     "huggingface",
@@ -888,34 +892,6 @@ def render_full(stats, simple=False, use_color=True, theme="gradient"):
             total_content = f"{total_label}{total_val}"
         lines.append(box_line(total_content, raw_len=len(total_raw)))
 
-    lines.append(box_sep_light())
-    lines.append(box_title("ALL-TIME TOTALS"))
-    lines.append(box_empty())
-    lines.append(
-        _row_bold(
-            "Messages",
-            [_fmt_optional_int(a["total_messages"]) for a in agents],
-        ),
-    )
-    lines.append(
-        _row_bold(
-            "Sessions",
-            [_fmt_optional_int(a["total_sessions"]) for a in agents],
-        ),
-    )
-    lines.append(
-        _row(
-            "First Session",
-            [a["first_session"] or "N/A" for a in agents],
-        ),
-    )
-    lines.append(
-        _row(
-            "Last Active",
-            [a["last_active"] or "N/A" for a in agents],
-        ),
-    )
-
     # ── VALUE & ROI (current billing cycle) ──
     if not simple:
         lines.append(box_sep_light())
@@ -969,21 +945,56 @@ def render_full(stats, simple=False, use_color=True, theme="gradient"):
         )
         lines.append(box_line(f"{label_str}{cols}", raw_len=len(raw)))
 
+    # ── ALL-TIME TOTALS ──
+    lines.append(box_sep_light())
+    lines.append(box_title("ALL-TIME TOTALS"))
+    lines.append(box_empty())
+    lines.append(
+        _row_bold(
+            "Messages",
+            [_fmt_optional_int(a["total_messages"]) for a in agents],
+        ),
+    )
+    lines.append(
+        _row_bold(
+            "Sessions",
+            [_fmt_optional_int(a["total_sessions"]) for a in agents],
+        ),
+    )
+    lines.append(
+        _row(
+            "First Session",
+            [a["first_session"] or "N/A" for a in agents],
+        ),
+    )
+    lines.append(
+        _row(
+            "Last Active",
+            [a["last_active"] or "N/A" for a in agents],
+        ),
+    )
+
     # ── MODEL BREAKDOWN ──
-    agents_with_models = [a for a in all_agents if a.get("model_usage")]
+    agents_with_models = [a for a in all_agents if a.get("model_usage") or a.get("alltime_model_usage")]
     if agents_with_models:
         lines.append(box_sep_light())
         lines.append(box_title("MODEL BREAKDOWN"))
         lines.append(box_empty())
 
         for a in agents_with_models:
+            model_usage = a.get("model_usage")
+            is_historical = False
+            if not model_usage and a.get("alltime_model_usage"):
+                model_usage = a["alltime_model_usage"]
+                is_historical = True
+
+            suffix = " (All-Time Historical)" if is_historical else ""
             lines.append(
                 box_line(
-                    f"  {th.agent_name(a['name'], a.get('id', ''))}",
-                    raw_len=len(f"  {a['name']}"),
+                    f"  {th.agent_name(a['name'] + suffix, a.get('id', ''))}",
+                    raw_len=len(f"  {a['name']}{suffix}"),
                 ),
             )
-            model_usage = a["model_usage"]
             total_tokens = sum(
                 (u.get("inputTokens") or 0) + u.get("outputTokens", 0)
                 for u in model_usage.values()
@@ -1000,7 +1011,9 @@ def render_full(stats, simple=False, use_color=True, theme="gradient"):
             shortened = {}
             for model in model_usage:
                 short = model
-                for prefix in ("claude-", "gemini-", "codex-"):
+                if "/" in short:
+                    short = short.split("/")[-1]
+                for prefix in ("claude-", "gemini-", "codex-", "antigravity-"):
                     short = short.replace(prefix, "")
                 short = re.sub(r"-(\d{8}|latest)$", "", short)
                 shortened[model] = short

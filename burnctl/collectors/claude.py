@@ -319,6 +319,7 @@ class ClaudeCollector(BaseCollector):
             "period_cost": period_cost,
             "alltime_cost": alltime_cost,
             "model_usage": period_model_usage,
+            "alltime_model_usage": alltime_model_usage,
             "first_session": first_session,
             "last_active": last_active,
             "total_messages": data.get("totalMessages", 0),

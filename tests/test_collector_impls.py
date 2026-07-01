@@ -179,7 +179,7 @@ class TestClaudeGetStats:
 
         expected_keys = {
             "messages", "sessions", "input_tokens", "output_tokens", "period_cost",
-            "alltime_cost", "model_usage",
+            "alltime_cost", "model_usage", "alltime_model_usage",
             "first_session", "last_active", "total_messages", "total_sessions",
             "tool_calls", "period_cost_estimated",
         }
@@ -646,10 +646,10 @@ class TestClaudeLoadDataGapFill:
 # Gemini collector
 # ---------------------------------------------------------------------------
 
-from burnctl.collectors.gemini import GeminiCollector, _parse_iso
+from burnctl.collectors.antigravity import AntigravityCollector, _parse_iso
 
 
-class TestGeminiParseIso:
+class TestAntigravityParseIso:
     """Verify _parse_iso handles various timestamp formats."""
 
     def test_z_suffix(self):
@@ -674,19 +674,19 @@ class TestGeminiParseIso:
         assert _parse_iso("") is None
 
 
-class TestGeminiIsAvailable:
+class TestAntigravityIsAvailable:
     """is_available delegates to glob.glob."""
 
     def test_available_when_sessions_exist(self):
-        with patch("burnctl.collectors.gemini.glob.glob", return_value=["/some/session.json"]):
-            assert GeminiCollector().is_available() is True
+        with patch("burnctl.collectors.antigravity.glob.glob", return_value=["/some/session.json"]):
+            assert AntigravityCollector().is_available() is True
 
     def test_unavailable_when_no_sessions(self):
-        with patch("burnctl.collectors.gemini.glob.glob", return_value=[]):
-            assert GeminiCollector().is_available() is False
+        with patch("burnctl.collectors.antigravity.glob.glob", return_value=[]):
+            assert AntigravityCollector().is_available() is False
 
 
-class TestGeminiGetStats:
+class TestAntigravityGetStats:
     """get_stats with temporary session JSON files."""
 
     @staticmethod
@@ -706,7 +706,7 @@ class TestGeminiGetStats:
                     "content": "hello",
                 },
                 {
-                    "type": "gemini",
+                    "type": "antigravity",
                     "timestamp": "2026-03-10T10:01:00Z",
                     "model": "gemini-2.5-flash",
                     "tokens": {"input": 100, "output": 200, "cached": 50},
@@ -718,7 +718,7 @@ class TestGeminiGetStats:
                     "content": "more",
                 },
                 {
-                    "type": "gemini",
+                    "type": "antigravity",
                     "timestamp": "2026-03-10T10:03:00Z",
                     "model": "gemini-2.5-pro",
                     "tokens": {"input": 300, "output": 400, "cached": 0},
@@ -732,8 +732,8 @@ class TestGeminiGetStats:
         end = datetime(2026, 3, 11)
         ref_date = datetime(2026, 3, 10)
 
-        with patch("burnctl.collectors.gemini.glob.glob", return_value=[fpath]):
-            stats = GeminiCollector().get_stats(start, end, ref_date)
+        with patch("burnctl.collectors.antigravity.glob.glob", return_value=[fpath]):
+            stats = AntigravityCollector().get_stats(start, end, ref_date)
 
         assert stats is not None
         assert stats["messages"] == 2
@@ -748,7 +748,7 @@ class TestGeminiGetStats:
             "messages": [
                 {"type": "user", "timestamp": "2026-03-10T10:00:00Z", "content": "hi"},
                 {
-                    "type": "gemini",
+                    "type": "antigravity",
                     "timestamp": "2026-03-10T10:01:00Z",
                     "model": "gemini-2.5-flash",
                     "tokens": {"input": 100, "output": 200, "cached": 0},
@@ -760,7 +760,7 @@ class TestGeminiGetStats:
             "messages": [
                 {"type": "user", "timestamp": "2026-03-05T10:00:00Z", "content": "old"},
                 {
-                    "type": "gemini",
+                    "type": "antigravity",
                     "timestamp": "2026-03-05T10:01:00Z",
                     "model": "gemini-2.5-flash",
                     "tokens": {"input": 500, "output": 600, "cached": 0},
@@ -773,8 +773,8 @@ class TestGeminiGetStats:
         start = datetime(2026, 3, 10)
         end = datetime(2026, 3, 11)
 
-        with patch("burnctl.collectors.gemini.glob.glob", return_value=[f1, f2]):
-            stats = GeminiCollector().get_stats(start, end, datetime(2026, 3, 10))
+        with patch("burnctl.collectors.antigravity.glob.glob", return_value=[f1, f2]):
+            stats = AntigravityCollector().get_stats(start, end, datetime(2026, 3, 10))
 
         assert stats["messages"] == 1  # period only
         assert stats["sessions"] == 1  # period only
@@ -787,14 +787,14 @@ class TestGeminiGetStats:
             "messages": [
                 {"type": "user", "timestamp": "2026-03-10T10:00:00Z", "content": "q1"},
                 {
-                    "type": "gemini",
+                    "type": "antigravity",
                     "timestamp": "2026-03-10T10:01:00Z",
                     "model": "gemini-2.5-flash",
                     "tokens": {"input": 100, "output": 200, "cached": 50},
                 },
                 {"type": "user", "timestamp": "2026-03-10T10:02:00Z", "content": "q2"},
                 {
-                    "type": "gemini",
+                    "type": "antigravity",
                     "timestamp": "2026-03-10T10:03:00Z",
                     "model": "gemini-2.5-flash",
                     "tokens": {"input": 300, "output": 400, "cached": 0},
@@ -803,8 +803,8 @@ class TestGeminiGetStats:
         }
         fpath = self._make_session_file(tmp_path, "session-acc.json", session)
 
-        with patch("burnctl.collectors.gemini.glob.glob", return_value=[fpath]):
-            stats = GeminiCollector().get_stats(
+        with patch("burnctl.collectors.antigravity.glob.glob", return_value=[fpath]):
+            stats = AntigravityCollector().get_stats(
                 datetime(2026, 3, 10), datetime(2026, 3, 11), datetime(2026, 3, 10),
             )
 
@@ -815,8 +815,8 @@ class TestGeminiGetStats:
         assert mu["gemini-2.5-flash"]["cachedTokens"] == 50
 
     def test_returns_none_when_no_sessions(self):
-        with patch("burnctl.collectors.gemini.glob.glob", return_value=[]):
-            stats = GeminiCollector().get_stats(
+        with patch("burnctl.collectors.antigravity.glob.glob", return_value=[]):
+            stats = AntigravityCollector().get_stats(
                 datetime(2026, 3, 10), datetime(2026, 3, 11), datetime(2026, 3, 10),
             )
         assert stats is None
@@ -826,7 +826,7 @@ class TestGeminiGetStats:
             "startTime": "2026-03-05T10:00:00Z",
             "messages": [
                 {"type": "user", "timestamp": "2026-03-05T10:00:00Z", "content": "hi"},
-                {"type": "gemini", "timestamp": "2026-03-05T10:01:00Z", "model": "m",
+                {"type": "antigravity", "timestamp": "2026-03-05T10:01:00Z", "model": "m",
                  "tokens": {"input": 1, "output": 1, "cached": 0}},
             ],
         }
@@ -834,15 +834,15 @@ class TestGeminiGetStats:
             "startTime": "2026-03-10T10:00:00Z",
             "messages": [
                 {"type": "user", "timestamp": "2026-03-10T10:00:00Z", "content": "hi"},
-                {"type": "gemini", "timestamp": "2026-03-10T10:01:00Z", "model": "m",
+                {"type": "antigravity", "timestamp": "2026-03-10T10:01:00Z", "model": "m",
                  "tokens": {"input": 1, "output": 1, "cached": 0}},
             ],
         }
         f1 = self._make_session_file(tmp_path, "session-old.json", older)
         f2 = self._make_session_file(tmp_path, "session-new.json", newer)
 
-        with patch("burnctl.collectors.gemini.glob.glob", return_value=[f1, f2]):
-            stats = GeminiCollector().get_stats(
+        with patch("burnctl.collectors.antigravity.glob.glob", return_value=[f1, f2]):
+            stats = AntigravityCollector().get_stats(
                 datetime(2026, 3, 1), datetime(2026, 3, 31), datetime(2026, 3, 13),
             )
 
@@ -858,7 +858,7 @@ class TestGeminiGetStats:
                     "content": "today",
                 },
                 {
-                    "type": "gemini",
+                    "type": "antigravity",
                     "timestamp": "2026-04-17T18:26:41Z",
                     "model": "gemini-3-flash-preview",
                     "tokens": {"input": 100, "output": 50, "cached": 0},
@@ -870,8 +870,8 @@ class TestGeminiGetStats:
         stale_ts = datetime(2026, 4, 17, 16, 4, 50).timestamp()
         os.utime(fpath, (stale_ts, stale_ts))
 
-        with patch("burnctl.collectors.gemini.glob.glob", return_value=[fpath]):
-            stats = GeminiCollector().get_stats(
+        with patch("burnctl.collectors.antigravity.glob.glob", return_value=[fpath]):
+            stats = AntigravityCollector().get_stats(
                 datetime(2026, 4, 17),
                 datetime(2026, 5, 17),
                 datetime(2026, 4, 17, 20, 0, 0),
@@ -884,29 +884,29 @@ class TestGeminiGetStats:
         assert stats["last_active"] == "2026-04-17"
 
 
-class TestGeminiPlanInfo:
+class TestAntigravityPlanInfo:
     def test_default(self):
-        info = GeminiCollector().get_plan_info({})
+        info = AntigravityCollector().get_plan_info({})
         assert info["plan_name"] == "free"
         assert info["plan_price"] == 0
         assert info["billing_day"] == 1
 
     def test_ai_pro(self):
-        info = GeminiCollector().get_plan_info({"agent_plans": {"gemini": "ai_pro"}})
+        info = AntigravityCollector().get_plan_info({"agent_plans": {"antigravity": "ai_pro"}})
         assert info["plan_name"] == "ai_pro"
         assert info["plan_price"] == 19.99
 
     def test_ai_ultra(self):
-        info = GeminiCollector().get_plan_info({"agent_plans": {"gemini": "ai_ultra"}})
+        info = AntigravityCollector().get_plan_info({"agent_plans": {"antigravity": "ai_ultra"}})
         assert info["plan_name"] == "ai_ultra"
         assert info["plan_price"] == 249.99
 
     def test_unknown_plan_defaults_zero(self):
-        info = GeminiCollector().get_plan_info({"agent_plans": {"gemini": "bogus"}})
+        info = AntigravityCollector().get_plan_info({"agent_plans": {"antigravity": "bogus"}})
         assert info["plan_price"] == 0
 
     def test_custom_billing_day(self):
-        info = GeminiCollector().get_plan_info({"billing_day": 15})
+        info = AntigravityCollector().get_plan_info({"billing_day": 15})
         assert info["billing_day"] == 15
 
     def test_cost_uses_historical_model_pricing(self, tmp_path):
@@ -916,7 +916,7 @@ class TestGeminiPlanInfo:
             "messages": [
                 {"type": "user", "timestamp": "2026-04-17T10:00:01+00:00"},
                 {
-                    "type": "gemini",
+                    "type": "antigravity",
                     "timestamp": "2026-04-17T10:00:02+00:00",
                     "model": "gemini-3-flash-preview",
                     "tokens": {"input": 1000, "output": 100, "cached": 0},
@@ -924,21 +924,21 @@ class TestGeminiPlanInfo:
             ],
         }))
 
-        with patch("burnctl.collectors.gemini.glob.glob", return_value=[str(session)]), \
-             patch("burnctl.collectors.gemini.get_model_pricing_for_time", return_value={
+        with patch("burnctl.collectors.antigravity.glob.glob", return_value=[str(session)]), \
+             patch("burnctl.collectors.antigravity.get_model_pricing_for_time", return_value={
                  "input": 2.0, "output": 10.0, "cache_read": 0.2,
              }):
             start = datetime(2026, 4, 17, 0, 0, 0)
             end = datetime(2026, 4, 18, 0, 0, 0)
-            stats = GeminiCollector().get_stats(start, end, end)
+            stats = AntigravityCollector().get_stats(start, end, end)
 
         assert stats["period_cost"] == pytest.approx(0.003)
         assert stats["alltime_cost"] == pytest.approx(0.003)
 
 
-class TestGeminiUpgradeUrl:
+class TestAntigravityUpgradeUrl:
     def test_returns_url(self):
-        assert GeminiCollector().get_upgrade_url() == "https://aistudio.google.com/app/plan_management"
+        assert AntigravityCollector().get_upgrade_url() == "https://aistudio.google.com/app/plan_management"
 
 
 # ---------------------------------------------------------------------------
@@ -1221,7 +1221,7 @@ class TestCodexGetStats:
 
         expected_keys = {
             "messages", "sessions", "input_tokens", "output_tokens", "period_cost",
-            "alltime_cost", "model_usage", "daily_messages",
+            "alltime_cost", "model_usage", "alltime_model_usage", "daily_messages",
             "first_session", "last_active", "total_messages", "total_sessions",
             "tool_calls",
         }
@@ -2700,7 +2700,7 @@ class TestCodexLiveParseCache:
         assert second["messages"] == 2
 
 
-class TestGeminiLiveParseCache:
+class TestAntigravityLiveParseCache:
     """Gemini session JSON files are cached by (mtime, size) in live mode."""
 
     def _write_session(self, chats_dir, name="session-1.json", msgs=1):
@@ -2712,7 +2712,7 @@ class TestGeminiLiveParseCache:
                 {"type": "user", "timestamp": "2026-06-01T10:0%d:05Z" % (1 + i)},
             )
         messages.append({
-            "type": "gemini",
+            "type": "antigravity",
             "timestamp": "2026-06-01T10:00:10Z",
             "model": "gemini-2.5-pro",
             "tokens": {"input": 100, "output": 50},
@@ -2721,19 +2721,19 @@ class TestGeminiLiveParseCache:
         (chats_dir / name).write_text(json.dumps(session), encoding="utf-8")
 
     def _setup(self, tmp_path, monkeypatch):
-        from burnctl.collectors import gemini as gemini_mod
+        from burnctl.collectors import antigravity as antigravity_mod
 
         chats_dir = tmp_path / "chats"
         chats_dir.mkdir()
         monkeypatch.setattr(
-            gemini_mod, "_CHAT_PATTERN", str(chats_dir / "session-*.json"),
+            antigravity_mod, "_CHAT_PATTERN", str(chats_dir / "session-*.json"),
         )
-        monkeypatch.setattr(gemini_mod, "get_agent_pricing", lambda a: {})
+        monkeypatch.setattr(antigravity_mod, "get_agent_pricing", lambda a: {})
         monkeypatch.setattr(
-            gemini_mod, "get_model_pricing_for_time", lambda *a, **k: {},
+            antigravity_mod, "get_model_pricing_for_time", lambda *a, **k: {},
         )
-        getattr(gemini_mod, "_SESSION_JSON_CACHE", {}).clear()
-        return gemini_mod, chats_dir
+        getattr(antigravity_mod, "_SESSION_JSON_CACHE", {}).clear()
+        return antigravity_mod, chats_dir
 
     def _period(self):
         return (
@@ -2745,19 +2745,19 @@ class TestGeminiLiveParseCache:
     def test_live_mode_skips_rereading_unchanged_files(
         self, tmp_path, monkeypatch,
     ):
-        gemini_mod, chats_dir = self._setup(tmp_path, monkeypatch)
+        antigravity_mod, chats_dir = self._setup(tmp_path, monkeypatch)
         self._write_session(chats_dir)
 
         calls = {"n": 0}
-        real_load = gemini_mod._load_session
+        real_load = antigravity_mod._load_session
 
         def counting(path):
             calls["n"] += 1
             return real_load(path)
 
-        monkeypatch.setattr(gemini_mod, "_load_session", counting)
+        monkeypatch.setattr(antigravity_mod, "_load_session", counting)
         start, end, ref = self._period()
-        collector = gemini_mod.GeminiCollector()
+        collector = antigravity_mod.AntigravityCollector()
 
         first = collector.get_stats(start, end, ref, live=True)
         second = collector.get_stats(start, end, ref, live=True)
@@ -2765,10 +2765,10 @@ class TestGeminiLiveParseCache:
         assert first["messages"] == second["messages"] == 1
 
     def test_live_mode_rereads_changed_files(self, tmp_path, monkeypatch):
-        gemini_mod, chats_dir = self._setup(tmp_path, monkeypatch)
+        antigravity_mod, chats_dir = self._setup(tmp_path, monkeypatch)
         self._write_session(chats_dir)
         start, end, ref = self._period()
-        collector = gemini_mod.GeminiCollector()
+        collector = antigravity_mod.AntigravityCollector()
 
         first = collector.get_stats(start, end, ref, live=True)
         assert first["messages"] == 1

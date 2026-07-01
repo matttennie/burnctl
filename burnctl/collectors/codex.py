@@ -282,6 +282,7 @@ class CodexCollector(BaseCollector):
         a_sids = set()
         first_dt = None
         last_dt = None
+        a_model_usage = {}  # type: dict
 
         found_any_parse = False
         pricing_table = self._get_pricing_table()
@@ -329,6 +330,16 @@ class CodexCollector(BaseCollector):
                     delta, historical_pricing or pricing,
                 )
                 a_cost += cost
+
+                # All-time Model usage
+                if primary_model:
+                    in_tok = delta.get("input_tokens", 0)
+                    out_tok = delta.get("output_tokens", 0)
+                    cached = delta.get("cached_input_tokens", 0)
+                    non_cached = max(in_tok - cached, 0)
+                    bucket = a_model_usage.setdefault(primary_model, {"inputTokens": 0, "outputTokens": 0})
+                    bucket["inputTokens"] += non_cached
+                    bucket["outputTokens"] += out_tok
 
                 if start <= ts < end:
                     sess_in_p = True
@@ -411,6 +422,7 @@ class CodexCollector(BaseCollector):
             "period_cost": p_cost,
             "alltime_cost": a_cost,
             "model_usage": p_model_usage,
+            "alltime_model_usage": a_model_usage,
             "daily_messages": p_daily,
             "first_session": _date_str(first_dt),
             "last_active": _date_str(last_dt),
