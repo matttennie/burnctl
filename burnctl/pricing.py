@@ -14,9 +14,13 @@ from datetime import datetime, timezone
 
 from burnctl import __version__ as _BURNCTL_VERSION
 
-# ── Gemini (per-million-token rates, USD) ────────────────────────
+# ── Antigravity (per-million-token rates, USD) ───────────────────
 
-GEMINI_PRICING = {
+ANTIGRAVITY_PRICING = {
+    "gemini-3.5-flash": {"input": 1.50, "output": 9.00, "cache_read": 0.15},
+    "gemini-3.5-flash-high": {"input": 1.50, "output": 9.00, "cache_read": 0.15},
+    "gemini 3.5 flash (high)": {"input": 1.50, "output": 9.00, "cache_read": 0.15},
+    "gemini 3.5 flash": {"input": 1.50, "output": 9.00, "cache_read": 0.15},
     "gemini-3.1-pro-preview": {"input": 2.00, "output": 12.0, "cache_read": 0.20},
     "gemini-3.1-flash-lite": {"input": 0.25, "output": 1.50, "cache_read": 0.025},
     "gemini-3-flash-preview": {"input": 0.50, "output": 3.0, "cache_read": 0.05},
@@ -59,7 +63,7 @@ _PRICING_HISTORY_DIR = os.path.join(
     os.path.expanduser("~"), ".local", "share", "burnctl",
 )
 _PRICING_HISTORY_FILE = os.path.join(_PRICING_HISTORY_DIR, "pricing-history.json")
-_HISTORY_TRACKED_AGENTS = {"gemini", "codex"}
+_HISTORY_TRACKED_AGENTS = {"antigravity", "codex"}
 
 
 def _snapshot_now_iso():
@@ -87,7 +91,7 @@ def _copy_pricing_table(table):
 
 # In-memory history cache: ((path, mtime_ns, size), history dict).
 # get_model_pricing_for_time is called per message/checkpoint by the
-# Gemini and Codex collectors, so the file must not be re-read each call.
+# Antigravity and Codex collectors, so the file must not be re-read each call.
 _PRICING_HISTORY_CACHE = None  # type: Optional[tuple]
 # (agent_id, history_file_path) pairs already snapshot-checked this process.
 _SNAPSHOT_RECORDED = set()  # type: set
@@ -197,13 +201,21 @@ def get_agent_pricing_for_time(agent_id, when=None):
 def get_model_pricing_for_time(agent_id, model_id, when=None):
     """Return pricing for one model, resolved against historical snapshots."""
     pricing_table = get_agent_pricing_for_time(agent_id, when) or {}
-    if model_id in pricing_table:
-        return pricing_table[model_id]
-    stripped = str(model_id)
-    if agent_id in ("claude", "codex", "gemini"):
+    model_key = str(model_id).lower()
+    if model_key in pricing_table:
+        return pricing_table[model_key]
+    stripped = model_key
+    if agent_id in ("claude", "codex", "antigravity"):
         import re
         stripped = re.sub(r"-(\d{8}|latest)$", "", stripped)
-    return pricing_table.get(stripped, {})
+    if stripped in pricing_table:
+        return pricing_table[stripped]
+    if agent_id == "antigravity":
+        if not stripped.startswith("gemini-") and f"gemini-{stripped}" in pricing_table:
+            return pricing_table[f"gemini-{stripped}"]
+        if not stripped.startswith("gemini ") and f"gemini {stripped}" in pricing_table:
+            return pricing_table[f"gemini {stripped}"]
+    return {}
 
 
 def _openrouter_api_key():
@@ -312,8 +324,8 @@ def get_agent_pricing(agent_id):
                 "claude-haiku-4-5": {"input": 1.0, "output": 5.0, "cache_read": 0.10, "cache_create": 1.25},
             }
 
-    if agent_id == "gemini":
-        result = dict(GEMINI_PRICING)
+    if agent_id == "antigravity":
+        result = dict(ANTIGRAVITY_PRICING)
         _record_pricing_snapshot(agent_id, result)
         return result
 
