@@ -18,8 +18,8 @@ DEFAULTS = {
     "compact": False,
     "claude_plan": "free",
     "claude_billing_day": 0,
-    "gemini_plan": "free",
-    "gemini_billing_day": 0,
+    "antigravity_plan": "free",
+    "antigravity_billing_day": 0,
     "codex_plan": "free",
     "codex_billing_day": 0,
     "agent_plans": {},
@@ -46,7 +46,7 @@ PLAN_PRICES = {
     "max20x": 200,
 }
 
-GEMINI_PLAN_PRICES = {
+ANTIGRAVITY_PLAN_PRICES = {
     "free": 0,
     "ai_plus": 7.99,
     "ai_pro": 19.99,
@@ -82,7 +82,7 @@ _VALIDATORS = {
     "claude_billing_day": (
         _valid_agent_billing_day, "must be 0 (use global) or 1-31",
     ),
-    "gemini_billing_day": (
+    "antigravity_billing_day": (
         _valid_agent_billing_day, "must be 0 (use global) or 1-31",
     ),
     "codex_billing_day": (
@@ -92,9 +92,9 @@ _VALIDATORS = {
         lambda v: v in PLAN_PRICES,
         f"must be one of: {', '.join(PLAN_PRICES.keys())}",
     ),
-    "gemini_plan": (
-        lambda v: v in GEMINI_PLAN_PRICES,
-        f"must be one of: {', '.join(GEMINI_PLAN_PRICES.keys())}",
+    "antigravity_plan": (
+        lambda v: v in ANTIGRAVITY_PLAN_PRICES,
+        f"must be one of: {', '.join(ANTIGRAVITY_PLAN_PRICES.keys())}",
     ),
     "codex_plan": (
         lambda v: v in CODEX_PLAN_PRICES,
@@ -107,12 +107,12 @@ _VALIDATORS = {
     "theme": (lambda v: v in THEMES, f"must be one of: {', '.join(THEMES)}"),
     "default_agents": (
         lambda v: isinstance(v, str) and len(v) > 0,
-        "must be a non-empty string (e.g., 'all', 'claude', 'claude,gemini')",
+        "must be a non-empty string (e.g., 'all', 'claude', 'claude,antigravity')",
     ),
 }
 
 _SCOPED_AGENTS = (
-    "claude", "gemini", "codex", "openrouter",
+    "claude", "antigravity", "codex", "openrouter",
     "huggingface", "elevenlabs", "tavily", "inworld",
     "groq", "mistral", "brave", "mercury", "jina",
     "anthropic", "openai",
@@ -126,9 +126,9 @@ _SCOPED_PLAN_VALIDATORS = {
         lambda v: v in PLAN_PRICES,
         f"must be one of: {', '.join(PLAN_PRICES.keys())}",
     ),
-    "gemini": (
-        lambda v: v in GEMINI_PLAN_PRICES,
-        f"must be one of: {', '.join(GEMINI_PLAN_PRICES.keys())}",
+    "antigravity": (
+        lambda v: v in ANTIGRAVITY_PLAN_PRICES,
+        f"must be one of: {', '.join(ANTIGRAVITY_PLAN_PRICES.keys())}",
     ),
     "codex": (
         lambda v: v in CODEX_PLAN_PRICES,
@@ -155,7 +155,7 @@ def _first_run_hint():
         "  # default billing day for all agents\n"
         "    burnctl config --codex billing_plan pro billing_day 18\n"
         "    burnctl config --claude billing_plan pro\n"
-        "    burnctl config --gemini billing_plan ai_pro\n"
+        "    burnctl config --antigravity billing_plan ai_pro\n"
         "    burnctl config --openrouter billing_plan enterprise billing_day 10\n"
         "\n"
         "  Run `burnctl config` to see all options.\n",
@@ -249,7 +249,7 @@ def show():
     print("  e.g.: burnctl config billing_day 15 theme colorblind")
     print("Set agent values with: burnctl config --<agent> billing_plan <plan> billing_day <day>")
     print("  e.g.: burnctl config --codex billing_plan pro billing_day 18")
-    print("        burnctl config --gemini billing_plan ai_pro")
+    print("        burnctl config --antigravity billing_plan ai_pro")
 
 
 def _coerce_plain_value(key, value):

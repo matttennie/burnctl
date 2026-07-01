@@ -275,7 +275,7 @@ def _resolve_collectors(args, config=None):
     if not selected:
         print(
             "No agent data found. Ensure at least one agent "
-            "(Claude Code, Gemini CLI, etc.) has been used on this system.",
+            "(Claude Code, Antigravity CLI, etc.) has been used on this system.",
             file=sys.stderr,
         )
         known = ", ".join(f"--{c.id}" for c in ALL_COLLECTORS) or "(none)"

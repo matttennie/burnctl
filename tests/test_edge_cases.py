@@ -18,7 +18,7 @@ from burnctl.collectors.codex import (
     _MAX_SESSION_BYTES,
     _parse_session,
 )
-from burnctl.collectors.gemini import GeminiCollector
+from burnctl.collectors.antigravity import AntigravityCollector
 from burnctl.config import DEFAULTS, _MAX_CONFIG_BYTES, load
 from burnctl.report import (
     aggregate_stats,
@@ -49,7 +49,7 @@ class TestEncodingEdgeCases:
                     "content": "hi",
                 },
                 {
-                    "type": "gemini",
+                    "type": "antigravity",
                     "timestamp": "2026-03-10T10:01:00Z",
                     "model": "gemini-2.5-flash",
                     "tokens": {"input": 100, "output": 200, "cached": 0},
@@ -66,12 +66,12 @@ class TestEncodingEdgeCases:
         ref = datetime(2026, 3, 10)
 
         with patch(
-            "burnctl.collectors.gemini.glob.glob",
+            "burnctl.collectors.antigravity.glob.glob",
             return_value=[str(fpath)],
         ):
             # json.load with default encoding handles BOM via utf-8-sig or
             # via the BOM being valid whitespace.  Either way, no crash.
-            stats = GeminiCollector().get_stats(start, end, ref)
+            stats = AntigravityCollector().get_stats(start, end, ref)
 
         # BOM may cause a JSONDecodeError depending on Python version,
         # but the collector catches that and returns None rather than crashing.
@@ -111,10 +111,10 @@ class TestEncodingEdgeCases:
         fpath.write_text("")
 
         with patch(
-            "burnctl.collectors.gemini.glob.glob",
+            "burnctl.collectors.antigravity.glob.glob",
             return_value=[str(fpath)],
         ):
-            stats = GeminiCollector().get_stats(
+            stats = AntigravityCollector().get_stats(
                 datetime(2026, 3, 1), datetime(2026, 3, 31),
                 datetime(2026, 3, 13),
             )
@@ -149,7 +149,7 @@ class TestLargeCorruptData:
                 "content": "msg {}".format(i),
             })
             messages.append({
-                "type": "gemini",
+                "type": "antigravity",
                 "timestamp": "2026-03-10T10:{:02d}:{:02d}Z".format(
                     i // 60 % 60, (i % 60) + 1 if i % 60 < 59 else 0,
                 ),
@@ -169,10 +169,10 @@ class TestLargeCorruptData:
         ref = datetime(2026, 3, 10)
 
         with patch(
-            "burnctl.collectors.gemini.glob.glob",
+            "burnctl.collectors.antigravity.glob.glob",
             return_value=[str(fpath)],
         ):
-            stats = GeminiCollector().get_stats(start, end, ref)
+            stats = AntigravityCollector().get_stats(start, end, ref)
 
         assert stats is not None
         assert stats["total_sessions"] == 1
@@ -358,10 +358,10 @@ class TestConcurrentRaceConditions:
     def test_gemini_files_disappear(self):
         """Glob finds files but they are gone when opened."""
         with patch(
-            "burnctl.collectors.gemini.glob.glob",
+            "burnctl.collectors.antigravity.glob.glob",
             return_value=["/vanished/session.json"],
         ):
-            stats = GeminiCollector().get_stats(
+            stats = AntigravityCollector().get_stats(
                 datetime(2026, 3, 1), datetime(2026, 4, 1),
                 datetime(2026, 3, 13),
             )
@@ -903,15 +903,15 @@ class TestCollectorFileSizeIntegration:
         assert "oversized" in err
 
     def test_gemini_skips_oversized_session(self, tmp_path, capsys):
-        """GeminiCollector.get_stats skips session files over the size limit."""
+        """AntigravityCollector.get_stats skips session files over the size limit."""
         big_session = tmp_path / "session-big.json"
         big_session.write_bytes(b"{}" + b" " * MAX_FILE_SIZE)
 
         with patch(
-            "burnctl.collectors.gemini.glob.glob",
+            "burnctl.collectors.antigravity.glob.glob",
             return_value=[str(big_session)],
         ):
-            stats = GeminiCollector().get_stats(
+            stats = AntigravityCollector().get_stats(
                 datetime(2026, 3, 1), datetime(2026, 4, 1),
                 datetime(2026, 3, 15),
             )
@@ -934,9 +934,9 @@ class TestCollectorFileSizeIntegration:
     def test_collectors_import_check_file_size(self):
         """All collectors that use file I/O import _check_file_size."""
         import burnctl.collectors.claude as claude_mod
-        import burnctl.collectors.gemini as gemini_mod
+        import burnctl.collectors.antigravity as antigravity_mod
         import burnctl.collectors.codex as codex_mod
 
         assert hasattr(claude_mod, "_check_file_size")
-        assert hasattr(gemini_mod, "_check_file_size")
+        assert hasattr(antigravity_mod, "_check_file_size")
         assert hasattr(codex_mod, "_check_file_size")

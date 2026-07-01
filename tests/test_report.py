@@ -333,8 +333,8 @@ class TestAggregateStats:
             stats={"period_cost": 10.0},
         )
         c2 = _make_collector(
-            collector_id="gemini",
-            name="Gemini",
+            collector_id="antigravity",
+            name="Antigravity",
             stats={"period_cost": 5.0},
         )
         config = {}
@@ -572,7 +572,7 @@ class TestAggregateStats:
                 datetime(2025, 2, 15),
             )
             aggregate_stats([c], config, ref_date=ref, offset=-1)
-            mock_cp.assert_called_once_with(1, -1)
+            mock_cp.assert_called_once_with(1, -1, ref_date=ref)
 
     def test_model_usage_passthrough(self):
         models = {"gpt-4": {"outputTokens": 10000}}
@@ -831,7 +831,7 @@ class TestRenderFull:
     def test_multi_agent_title(self, mock_term):
         mock_term.return_value = os.terminal_size((120, 40))
         a1 = _make_agent_data(id="claude", name="Claude")
-        a2 = _make_agent_data(id="gemini", name="Gemini")
+        a2 = _make_agent_data(id="antigravity", name="Antigravity")
         stats = _make_stats(agents=[a1, a2])
         result = render_full(stats, use_color=False)
         assert "BURNCTL MULTI-AGENT REPORT" in result
@@ -985,7 +985,7 @@ class TestRenderFull:
     def test_system_total_for_multi_agent(self, mock_term):
         mock_term.return_value = os.terminal_size((120, 40))
         a1 = _make_agent_data(id="claude", name="Claude", period_cost=10.0)
-        a2 = _make_agent_data(id="gemini", name="Gemini", period_cost=5.0)
+        a2 = _make_agent_data(id="antigravity", name="Antigravity", period_cost=5.0)
         stats = _make_stats(agents=[a1, a2], total_period_cost=15.0)
         result = render_full(stats, use_color=False)
         assert "System Total" in result
@@ -1172,11 +1172,11 @@ class TestRenderCompact:
 
     def test_multi_agent(self):
         a1 = _make_agent_data(name="Claude", period_cost=10.0)
-        a2 = _make_agent_data(name="Gemini", period_cost=5.0)
+        a2 = _make_agent_data(name="Antigravity", period_cost=5.0)
         stats = _make_stats(agents=[a1, a2], total_period_cost=15.0)
         result = render_compact(stats)
         assert "Claude: $10.00" in result
-        assert "Gemini: $5.00" in result
+        assert "Antigravity: $5.00" in result
         assert "Total: $15.00" in result
         assert " | " in result
 
@@ -1225,7 +1225,7 @@ class TestRenderAccessible:
 
     def test_multi_agent_title(self):
         a1 = _make_agent_data(name="Claude")
-        a2 = _make_agent_data(name="Gemini")
+        a2 = _make_agent_data(name="Antigravity")
         stats = _make_stats(agents=[a1, a2])
         result = render_accessible(stats)
         assert "Burnctl Multi-Agent Usage Report" in result
@@ -1267,7 +1267,7 @@ class TestRenderAccessible:
 
     def test_system_total_multi_agent(self):
         a1 = _make_agent_data(name="Claude", period_cost=10.0)
-        a2 = _make_agent_data(name="Gemini", period_cost=5.0)
+        a2 = _make_agent_data(name="Antigravity", period_cost=5.0)
         stats = _make_stats(agents=[a1, a2], total_period_cost=15.0)
         result = render_accessible(stats)
         assert "System total period cost: $15.00" in result
@@ -1393,7 +1393,7 @@ class TestExportCsv:
     def test_multi_agent(self, tmp_path):
         filepath = str(tmp_path / "test.csv")
         a1 = _make_agent_data(id="claude", name="Claude")
-        a2 = _make_agent_data(id="gemini", name="Gemini")
+        a2 = _make_agent_data(id="antigravity", name="Antigravity")
         stats = _make_stats(agents=[a1, a2])
         export_csv(stats, filepath=filepath)
 
@@ -1403,7 +1403,7 @@ class TestExportCsv:
 
         assert len(rows) == 2
         assert rows[0]["agent"] == "claude"
-        assert rows[1]["agent"] == "gemini"
+        assert rows[1]["agent"] == "antigravity"
 
     def test_empty_agents_no_file(self, tmp_path, capsys):
         filepath = str(tmp_path / "test.csv")
@@ -1762,7 +1762,7 @@ class TestRenderDiff:
                 period_start="2024-12-01", period_end="2025-01-01",
             ),
             _make_agent_data(
-                id="gemini", name="Gemini",
+                id="antigravity", name="Antigravity",
                 messages=60, period_cost=8.0,
                 period_start="2024-12-01", period_end="2025-01-01",
             ),
@@ -1773,7 +1773,7 @@ class TestRenderDiff:
                 messages=100, period_cost=12.50,
             ),
             _make_agent_data(
-                id="gemini", name="Gemini",
+                id="antigravity", name="Antigravity",
                 messages=90, period_cost=11.0,
             ),
         ]
@@ -1783,7 +1783,7 @@ class TestRenderDiff:
         result = render_diff(cur, prev)
 
         assert "Claude" in result
-        assert "Gemini" in result
+        assert "Antigravity" in result
         assert "System Total" in result
 
     def test_empty_agents_both_periods(self):

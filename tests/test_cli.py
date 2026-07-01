@@ -74,7 +74,7 @@ class TestBuildParser:
         "flag",
         [
             "--claude",
-            "--gemini",
+            "--antigravity",
             "--codex",
             "--local",
             "--opencode",
@@ -334,7 +334,7 @@ class TestResolveCollectors:
 
 class TestDefaultAgentsConfig:
     """The documented ``default_agents`` config key narrows the no-flag
-    selection (``burnctl config default_agents claude,gemini``)."""
+    selection (``burnctl config default_agents claude,antigravity``)."""
 
     def _collectors(self):
         return [
@@ -641,7 +641,7 @@ class TestHandleConfig:
         args = argparse.Namespace(
             items=[],
             claude=False,
-            gemini=False,
+            antigravity=False,
             codex=False,
             openrouter=False,
             local=False,
@@ -657,7 +657,7 @@ class TestHandleConfig:
         args = argparse.Namespace(
             items=["billing_day"],
             claude=False,
-            gemini=False,
+            antigravity=False,
             codex=False,
             openrouter=False,
             local=False,
@@ -675,7 +675,7 @@ class TestHandleConfig:
         args = argparse.Namespace(
             items=["nonexistent_key"],
             claude=False,
-            gemini=False,
+            antigravity=False,
             codex=False,
             openrouter=False,
             local=False,
@@ -693,7 +693,7 @@ class TestHandleConfig:
         args = argparse.Namespace(
             items=["nonexistent_key"],
             claude=False,
-            gemini=False,
+            antigravity=False,
             codex=False,
             openrouter=False,
             local=False,
@@ -713,7 +713,7 @@ class TestHandleConfig:
         args = argparse.Namespace(
             items=["billing_day", "15", "theme", "classic"],
             claude=False,
-            gemini=False,
+            antigravity=False,
             codex=False,
             openrouter=False,
             local=False,
@@ -729,7 +729,7 @@ class TestHandleConfig:
         args = argparse.Namespace(
             items=["billing_plan", "pro", "billing_day", "18"],
             claude=False,
-            gemini=False,
+            antigravity=False,
             codex=True,
             openrouter=False,
             local=False,

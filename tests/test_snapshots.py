@@ -86,8 +86,8 @@ SNAPSHOT_STATS = {
             "inactive": False,
         },
         {
-            "id": "gemini",
-            "name": "Gemini CLI",
+            "id": "antigravity",
+            "name": "Antigravity CLI",
             "plan_name": "pay-as-you-go",
             "plan_price": 0,
             "interval": "mo",

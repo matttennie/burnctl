@@ -1,7 +1,7 @@
 """Collector registry for supported AI coding agents."""
 
 from burnctl.collectors.claude import ClaudeCollector
-from burnctl.collectors.gemini import GeminiCollector
+from burnctl.collectors.antigravity import AntigravityCollector
 from burnctl.collectors.codex import CodexCollector
 from burnctl.collectors.local import LocalCollector
 from burnctl.collectors.api_usage import discover_collectors
@@ -9,7 +9,7 @@ from burnctl.collectors.stubs import OpenCodeCollector
 
 ALL_COLLECTORS = [
     ClaudeCollector(),
-    GeminiCollector(),
+    AntigravityCollector(),
     CodexCollector(),
     *discover_collectors(),
     LocalCollector(),

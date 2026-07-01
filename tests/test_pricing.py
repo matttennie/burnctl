@@ -1,7 +1,7 @@
 """Tests for burnctl.pricing module.
 
 Covers get_agent_pricing for every known agent ID, verifies the structure
-of GEMINI_PRICING and OPENAI_PRICING, and ensures returned dicts are copies.
+of ANTIGRAVITY_PRICING and OPENAI_PRICING, and ensures returned dicts are copies.
 Python 3.8 compatible -- no walrus operator, no match/case.
 """
 
@@ -12,7 +12,7 @@ from unittest.mock import patch
 from burnctl.pricing import (
     get_agent_pricing,
     get_model_pricing_for_time,
-    GEMINI_PRICING,
+    ANTIGRAVITY_PRICING,
     OPENAI_PRICING,
 )
 
@@ -70,17 +70,17 @@ class TestGetAgentPricingClaude:
 
 class TestGetAgentPricingGemini:
     def test_returns_gemini_pricing_copy(self):
-        result = get_agent_pricing("gemini")
-        assert result == GEMINI_PRICING
+        result = get_agent_pricing("antigravity")
+        assert result == ANTIGRAVITY_PRICING
 
     def test_returns_copy_not_original(self):
-        result = get_agent_pricing("gemini")
-        assert result is not GEMINI_PRICING
+        result = get_agent_pricing("antigravity")
+        assert result is not ANTIGRAVITY_PRICING
 
     def test_mutation_does_not_affect_module(self):
-        result = get_agent_pricing("gemini")
+        result = get_agent_pricing("antigravity")
         result["mutated-model"] = {"input": 0}
-        assert "mutated-model" not in GEMINI_PRICING
+        assert "mutated-model" not in ANTIGRAVITY_PRICING
 
 
 class TestGetAgentPricingCodex:
@@ -108,12 +108,12 @@ class TestHistoricalPricing:
         with patch("burnctl.pricing._PRICING_HISTORY_FILE", str(history_file)), \
              patch("burnctl.pricing._PRICING_HISTORY_DIR", str(history_dir)), \
              patch("burnctl.pricing._snapshot_now_iso", return_value="2026-04-17T12:00:00+00:00"):
-            result = get_agent_pricing("gemini")
+            result = get_agent_pricing("antigravity")
 
-        assert result == GEMINI_PRICING
+        assert result == ANTIGRAVITY_PRICING
         payload = json.loads(history_file.read_text())
-        assert payload["gemini"][0]["effective_from"] == "2026-04-17T12:00:00+00:00"
-        assert payload["gemini"][0]["pricing"]["gemini-3-flash-preview"]["input"] == 0.50
+        assert payload["antigravity"][0]["effective_from"] == "2026-04-17T12:00:00+00:00"
+        assert payload["antigravity"][0]["pricing"]["gemini-3-flash-preview"]["input"] == 0.50
 
     def test_resolves_snapshot_effective_at_timestamp(self, tmp_path):
         history_file = tmp_path / "pricing-history.json"
@@ -169,10 +169,10 @@ class TestPricingHistoryCaching:
         history_file = tmp_path / "pricing-history.json"
         # Pre-seed with the current static table so no snapshot write occurs.
         history_file.write_text(json.dumps({
-            "gemini": [{
+            "antigravity": [{
                 "effective_from": "2026-01-01T00:00:00+00:00",
                 "pricing": pricing_mod._copy_pricing_table(
-                    pricing_mod.GEMINI_PRICING,
+                    pricing_mod.ANTIGRAVITY_PRICING,
                 ),
             }],
         }))
@@ -190,7 +190,7 @@ class TestPricingHistoryCaching:
              patch("burnctl.pricing.json.load", new=counting):
             for _ in range(5):
                 result = pricing_mod.get_model_pricing_for_time(
-                    "gemini", "gemini-2.5-pro", when,
+                    "antigravity", "gemini-2.5-pro", when,
                 )
 
         assert result["input"] == 1.25
@@ -211,8 +211,8 @@ class TestPricingHistoryCaching:
         with patch("burnctl.pricing._PRICING_HISTORY_FILE", str(history_file)), \
              patch("burnctl.pricing._PRICING_HISTORY_DIR", str(tmp_path)), \
              patch("burnctl.pricing._load_pricing_history", new=counting):
-            get_agent_pricing("gemini")
-            get_agent_pricing("gemini")
+            get_agent_pricing("antigravity")
+            get_agent_pricing("antigravity")
 
         assert calls["n"] == 1
 
@@ -351,12 +351,12 @@ class TestGetAgentPricingOpenRouter:
 
 
 # ---------------------------------------------------------------------------
-# GEMINI_PRICING structure
+# ANTIGRAVITY_PRICING structure
 # ---------------------------------------------------------------------------
 
 
-class TestGeminiPricingStructure:
-    """Verify GEMINI_PRICING has expected models and rate keys."""
+class TestAntigravityPricingStructure:
+    """Verify ANTIGRAVITY_PRICING has expected models and rate keys."""
 
     def test_expected_models_present(self):
         expected_models = {
@@ -365,16 +365,16 @@ class TestGeminiPricingStructure:
             "gemini-2.0-flash",
             "gemini-2.0-flash-lite",
         }
-        assert expected_models.issubset(set(GEMINI_PRICING.keys()))
+        assert expected_models.issubset(set(ANTIGRAVITY_PRICING.keys()))
 
     def test_each_model_has_rate_keys(self):
-        for model, rates in GEMINI_PRICING.items():
+        for model, rates in ANTIGRAVITY_PRICING.items():
             assert "input" in rates, "{} missing 'input'".format(model)
             assert "output" in rates, "{} missing 'output'".format(model)
             assert "cache_read" in rates, "{} missing 'cache_read'".format(model)
 
     def test_rates_are_positive_numbers(self):
-        for model, rates in GEMINI_PRICING.items():
+        for model, rates in ANTIGRAVITY_PRICING.items():
             for key in ("input", "output", "cache_read"):
                 assert isinstance(rates[key], (int, float)), \
                     "{}.{} should be numeric".format(model, key)
@@ -382,8 +382,8 @@ class TestGeminiPricingStructure:
                     "{}.{} should be positive".format(model, key)
 
     def test_pro_more_expensive_than_flash(self):
-        pro = GEMINI_PRICING["gemini-2.5-pro"]
-        flash = GEMINI_PRICING["gemini-2.5-flash"]
+        pro = ANTIGRAVITY_PRICING["gemini-2.5-pro"]
+        flash = ANTIGRAVITY_PRICING["gemini-2.5-flash"]
         assert pro["input"] > flash["input"]
         assert pro["output"] > flash["output"]
 
@@ -442,11 +442,11 @@ class TestPricingCopySemantics:
     """Callers should receive copies so module-level dicts stay pristine."""
 
     def test_gemini_copy_independence(self):
-        a = get_agent_pricing("gemini")
-        b = get_agent_pricing("gemini")
+        a = get_agent_pricing("antigravity")
+        b = get_agent_pricing("antigravity")
         a["injected"] = True
         assert "injected" not in b
-        assert "injected" not in GEMINI_PRICING
+        assert "injected" not in ANTIGRAVITY_PRICING
 
     def test_codex_copy_independence(self):
         a = get_agent_pricing("codex")

@@ -11,13 +11,13 @@ burnctl \- unified AI coding agent usage dashboard
 .B burnctl
 reads local session data and supported provider APIs to report usage, costs,
 model breakdowns, and billing-period summaries for AI coding tools such as
-Claude Code, Gemini CLI, Codex CLI, and OpenRouter.
+Claude Code, Antigravity CLI, Codex CLI, and OpenRouter.
 .SH TOP-LEVEL OPTIONS
 .TP
 .B \-v, \-\-version
 Show the installed burnctl version.
 .TP
-.B \-\-claude, \-\-gemini, \-\-codex, \-\-openrouter, \-\-huggingface, \-\-elevenlabs, \-\-tavily, \-\-local, \-\-opencode
+.B \-\-claude, \-\-antigravity, \-\-codex, \-\-openrouter, \-\-huggingface, \-\-elevenlabs, \-\-tavily, \-\-local, \-\-opencode
 Limit the report to the named agent. Providers discovered from the burnctl
 usage log (Anthropic, OpenAI, Inworld, Groq, Mistral, Brave, Mercury,
 Jina) get matching flags when present.
@@ -106,13 +106,13 @@ Examples:
 .PP
 \fBburnctl config --claude billing_plan pro\fR
 .PP
-\fBburnctl config --gemini billing_plan ai_pro\fR
+\fBburnctl config --antigravity billing_plan ai_pro\fR
 .PP
 \fBburnctl config --codex billing_plan plus billing_day 17\fR
 .PP
 \fBburnctl config --openrouter billing_plan enterprise billing_day 10\fR
 .PP
-\fBburnctl config default_agents claude,gemini\fR
+\fBburnctl config default_agents claude,antigravity\fR
 .PP
 \fBburnctl config no_color true\fR
 .RE
@@ -149,7 +149,7 @@ OpenRouter live request ledger.
 .PP
 \fBburnctl\fR
 .PP
-\fBburnctl --claude --gemini\fR
+\fBburnctl --claude --antigravity\fR
 .PP
 \fBburnctl -p max5x -b 15\fR
 .PP

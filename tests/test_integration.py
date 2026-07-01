@@ -16,7 +16,7 @@ from unittest.mock import patch
 import pytest
 
 from burnctl.collectors.claude import ClaudeCollector
-from burnctl.collectors.gemini import GeminiCollector
+from burnctl.collectors.antigravity import AntigravityCollector
 from burnctl.collectors.codex import CodexCollector
 from burnctl.collectors.api_usage import ApiUsageCollector
 from burnctl.report import (
@@ -184,7 +184,7 @@ class TestClaudeIntegration:
 # ── 2. Gemini collector with realistic session files ─────────────────
 
 
-class TestGeminiIntegration:
+class TestAntigravityIntegration:
     """Full pipeline test for the Gemini collector."""
 
     @staticmethod
@@ -218,7 +218,7 @@ class TestGeminiIntegration:
                 {
                     "id": "2",
                     "timestamp": "2026-03-11T14:30:05Z",
-                    "type": "gemini",
+                    "type": "antigravity",
                     "content": "response",
                     "model": "gemini-2.5-flash",
                     "tokens": {
@@ -242,7 +242,7 @@ class TestGeminiIntegration:
                 {
                     "id": "4",
                     "timestamp": "2026-03-11T14:31:05Z",
-                    "type": "gemini",
+                    "type": "antigravity",
                     "content": "response2",
                     "model": "gemini-2.5-flash",
                     "tokens": {
@@ -271,7 +271,7 @@ class TestGeminiIntegration:
                 {
                     "id": "11",
                     "timestamp": "2025-01-15T10:00:05Z",
-                    "type": "gemini",
+                    "type": "antigravity",
                     "content": "old answer",
                     "model": "gemini-2.5-flash",
                     "tokens": {
@@ -299,9 +299,9 @@ class TestGeminiIntegration:
         ref_date = datetime(2026, 3, 13)
 
         with patch(
-            "burnctl.collectors.gemini._CHAT_PATTERN", pattern
+            "burnctl.collectors.antigravity._CHAT_PATTERN", pattern
         ):
-            collector = GeminiCollector()
+            collector = AntigravityCollector()
             stats = collector.get_stats(start, end, ref_date)
 
         assert stats is not None
@@ -341,9 +341,9 @@ class TestGeminiIntegration:
         pattern = self._build_sessions(tmp_path)
 
         with patch(
-            "burnctl.collectors.gemini._CHAT_PATTERN", pattern
+            "burnctl.collectors.antigravity._CHAT_PATTERN", pattern
         ):
-            stats = GeminiCollector().get_stats(
+            stats = AntigravityCollector().get_stats(
                 datetime(2026, 3, 10),
                 datetime(2026, 4, 10),
                 datetime(2026, 3, 13),
@@ -889,8 +889,8 @@ class TestEdgeCases:
 
         pattern = str(chat_dir / "session-*.json")
 
-        with patch("burnctl.collectors.gemini._CHAT_PATTERN", pattern):
-            stats = GeminiCollector().get_stats(
+        with patch("burnctl.collectors.antigravity._CHAT_PATTERN", pattern):
+            stats = AntigravityCollector().get_stats(
                 datetime(2026, 3, 10),
                 datetime(2026, 4, 10),
                 datetime(2026, 3, 13),
@@ -993,7 +993,7 @@ class TestEdgeCases:
                 {
                     "id": "2",
                     "timestamp": "2026-03-11T10:00:05Z",
-                    "type": "gemini",
+                    "type": "antigravity",
                     "content": "hello",
                     "model": "",
                     "tokens": {
@@ -1013,8 +1013,8 @@ class TestEdgeCases:
 
         pattern = str(chat_dir / "session-*.json")
 
-        with patch("burnctl.collectors.gemini._CHAT_PATTERN", pattern):
-            stats = GeminiCollector().get_stats(
+        with patch("burnctl.collectors.antigravity._CHAT_PATTERN", pattern):
+            stats = AntigravityCollector().get_stats(
                 datetime(2026, 3, 10),
                 datetime(2026, 4, 10),
                 datetime(2026, 3, 13),

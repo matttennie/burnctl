@@ -5,13 +5,13 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "burnctl"
 version = "0.3.2"
-description = "Local AI usage and cost tracker for Claude Code, Gemini CLI, Codex CLI, OpenRouter, and more"
+description = "Local AI usage and cost tracker for Claude Code, Antigravity CLI, Codex CLI, OpenRouter, and more"
 readme = "README.md"
 license = {text = "MIT"}
 authors = [{name = "Matthew Tennie", email = "4433555+matttennie@users.noreply.github.com"}]
 requires-python = ">=3.8"
 dependencies = []
-keywords = ["ai", "usage", "dashboard", "cli", "claude", "gemini", "codex"]
+keywords = ["ai", "usage", "dashboard", "cli", "claude", "antigravity", "codex"]
 
 classifiers = [
     "Development Status :: 4 - Beta",

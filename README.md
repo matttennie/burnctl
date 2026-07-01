@@ -1,6 +1,6 @@
 # burnctl
 
-Local AI usage and cost tracking for Claude Code, Gemini CLI, Codex CLI, OpenRouter, and related tools.
+Local AI usage and cost tracking for Claude Code, Antigravity CLI, Codex CLI, OpenRouter, and related tools.
 
 Reads local session data plus provider APIs you already use, then shows tokens, costs, billing-period totals, model breakdowns, and ROI in one terminal view. No extra telemetry, no separate hosted service.
 
@@ -9,7 +9,7 @@ Reads local session data plus provider APIs you already use, then shows tokens, 
 | Agent | Source |
 |-------|--------|
 | Claude Code | `~/.claude/stats-cache.json` |
-| Gemini CLI | `~/.gemini/` sessions |
+| Antigravity CLI | `~/.gemini/` sessions |
 | Codex CLI | `~/.codex/sessions/*.jsonl` |
 | OpenRouter | OpenRouter activity API + local request ledger |
 | HuggingFace | HF billing API (`HF_TOKEN` with billing read permission) + local router proxy ledger for model names |
@@ -47,7 +47,7 @@ man burnctl
 
 ```
 burnctl                     # all agents, current period
-burnctl --claude --gemini   # just those two
+burnctl --claude --antigravity  # just those two
 burnctl -p max5x -b 15     # Claude Max 5×, billing day 15
 burnctl -P last             # previous billing period
 ```
@@ -68,7 +68,7 @@ burnctl -L            # live auto-refreshing dashboard (top mode)
 
 ### OpenRouter proxy
 
-Routes OpenRouter-aware traffic through a local proxy for live request-level tracking. Does not touch Claude, Gemini, or Codex subscription flows.
+Routes OpenRouter-aware traffic through a local proxy for live request-level tracking. Does not touch Claude, Antigravity, or Codex subscription flows.
 
 ```
 burnctl setup openrouter            # one-time install (LaunchAgent + shell hook)
@@ -131,7 +131,7 @@ burnctl/
 └── collectors/
     ├── base.py           # ABC
     ├── claude.py
-    ├── gemini.py
+    ├── antigravity.py
     ├── codex.py
     ├── api_usage.py      # OpenRouter, HuggingFace, etc.
     ├── local.py          # local-model detection stub
