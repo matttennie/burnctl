@@ -73,13 +73,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `--until` without `--since` now errors instead of being silently ignored
 - `-i/--interval` now validates and normalizes interval aliases
   (e.g. `yearly` → `yr`) the same way `burnctl config billing_interval` does
-- `ApiUsageCollector._file` referenced the old `USAGE_FILE` constant after the Orchard removal — any caller that did not pass an explicit `usage_file` would hit a `NameError` at runtime
+- `ApiUsageCollector._file` referenced the old `USAGE_FILE` constant after an internal collector refactor — any caller that did not pass an explicit `usage_file` would hit a `NameError` at runtime
 - OpenRouter proxy `_parse_json_usage` wrote zero-token ledger records for streamed SSE chunks that contained no `usage` object, overwriting the real record on non-final frames
 - OpenRouter proxy `_parse_json_usage` ignored a top-level `reasoning_tokens` field when `completion_tokens_details` was absent
 - Stale `User-Agent: burnctl/0.1.0` in OpenRouter and pricing HTTP clients; now derives from `burnctl.__version__`
 - `pyproject.toml` `keywords` was misplaced under `[project.optional-dependencies]`, producing a phantom `burnctl[keywords]` extra and no real keyword metadata
 - `pyproject.toml` `[claude]` extra pointed at `claude-usage`, which is not on PyPI; the README install step would fail for every public user
-- Dangling lint, type, and long-line issues surfaced by the post-Orchard/post-Aider refactors
+- Dangling lint, type, and long-line issues surfaced by recent internal refactors
 
 ### Changed
 
