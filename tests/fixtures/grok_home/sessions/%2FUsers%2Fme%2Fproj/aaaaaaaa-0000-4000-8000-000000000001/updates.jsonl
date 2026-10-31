@@ -1,0 +1,7 @@
+{"timestamp": 1791633600.0, "method": "session/update", "params": {"sessionId": "aaaaaaaa-0000-4000-8000-000000000001", "update": {"sessionUpdate": "user_message_chunk"}}}
+{"timestamp": 1791633600.0, "method": "session/update", "params": {"sessionId": "aaaaaaaa-0000-4000-8000-000000000001", "update": {"sessionUpdate": "tool_call"}}}
+{"timestamp": 1791633600.0, "method": "session/update", "params": {"sessionId": "aaaaaaaa-0000-4000-8000-000000000001", "update": {"sessionUpdate": "turn_completed"}}}
+{"timestamp": 1792497600.0, "method": "session/update", "params": {"sessionId": "aaaaaaaa-0000-4000-8000-000000000001", "update": {"sessionUpdate": "tool_call"}}}
+{"timestamp": 1792497600.0, "method": "session/update", "params": {"sessionId": "aaaaaaaa-0000-4000-8000-000000000001", "update": {"sessionUpdate": "tool_call"}}}
+{"timestamp": 1792497600.0, "method": "session/update", "params": {"sessionId": "aaaaaaaa-0000-4000-8000-000000000001", "update": {"sessionUpdate": "agent_message_chunk"}}}
+{"timestamp": 1792497600.0, "method": "session/update", "params": {"sessionId": "aaaaaaaa-0000-4000-8000-000000000001", "update": {"sessionUpdate": "turn_completed"}}}

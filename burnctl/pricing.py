@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 from burnctl import __version__ as _BURNCTL_VERSION
 
 # ── Antigravity (per-million-token rates, USD) ───────────────────
+# Rates last reviewed 2026-07-01 from https://ai.google.dev/gemini-api/docs/pricing
 
 ANTIGRAVITY_PRICING = {
     "gemini-3.5-flash": {"input": 1.50, "output": 9.00, "cache_read": 0.15},
@@ -32,6 +33,7 @@ ANTIGRAVITY_PRICING = {
 }
 
 # ── OpenAI / Codex (per-million-token rates, USD) ───────────────
+# Rates last reviewed 2026-07-01 from https://openai.com/api/pricing/
 
 OPENAI_PRICING = {
     "gpt-5.4-pro": {"input": 30.0, "output": 180.0},
@@ -50,6 +52,24 @@ OPENAI_PRICING = {
     "codex-mini": {"input": 0.75, "output": 3.0, "cache_read": 0.025},
 }
 
+_GROK_BUILD = {"input": 1.00, "output": 2.00, "cache_read": 0.20}
+_GROK_4_20 = {"input": 1.25, "output": 2.50, "cache_read": 0.20}
+
+# ── xAI / Grok Build (per-million-token rates, USD) ─────────────
+# Rates verified 2026-10-30 from https://docs.x.ai/docs/models
+# Under-200k-token prompt tier only; prompts >=200k are billed at 2x and not modelled.
+XAI_PRICING = {
+    "grok-build-0.1": _GROK_BUILD,
+    "grok-build": _GROK_BUILD,
+    "grok-4.7": {"input": 2.00, "output": 6.00, "cache_read": 0.50},
+    "grok-4.6": {"input": 2.00, "output": 6.00, "cache_read": 0.50},
+    "grok-4.5": {"input": 2.00, "output": 6.00, "cache_read": 0.30},
+    "grok-4.3": {"input": 1.25, "output": 2.50, "cache_read": 0.20},
+    "grok-4.20-0309-reasoning": _GROK_4_20,
+    "grok-4.20-0309-non-reasoning": _GROK_4_20,
+    "grok-4.20-multi-agent-0309": _GROK_4_20,
+}
+
 _OPENROUTER_MODELS_URL = "https://openrouter.ai/api/v1/models"
 _OPENROUTER_KEY_ENV_VARS = (
     "OPENROUTER_MGMT_API_KEY",
@@ -64,7 +84,7 @@ _PRICING_HISTORY_DIR = os.path.join(
 )
 _PRICING_HISTORY_FILE = os.path.join(_PRICING_HISTORY_DIR, "pricing-history.json")
 # Static per-agent tables; every entry here gets history snapshots.
-_STATIC_PRICING = {"antigravity": ANTIGRAVITY_PRICING, "codex": OPENAI_PRICING}
+_STATIC_PRICING = {"antigravity": ANTIGRAVITY_PRICING, "codex": OPENAI_PRICING, "grok": XAI_PRICING}
 _HISTORY_TRACKED_AGENTS = set(_STATIC_PRICING)
 # Extra prefixes tried when a model id misses the table.
 _MODEL_ALIAS_PREFIXES = {"antigravity": ("gemini-", "gemini ")}
@@ -318,12 +338,21 @@ def get_agent_pricing(agent_id):
             from claude_usage.pricing import get_pricing
             return get_pricing()
         except ImportError:
+            # Rates verified 2026-10-06 from https://docs.anthropic.com/en/docs/about-claude/pricing
             return {
-                "claude-opus-4-6": {"input": 5.0, "output": 25.0, "cache_read": 0.50, "cache_create": 6.25},
-                "claude-opus-4-5": {"input": 5.0, "output": 25.0, "cache_read": 0.50, "cache_create": 6.25},
-                "claude-sonnet-4-6": {"input": 3.0, "output": 15.0, "cache_read": 0.30, "cache_create": 3.75},
-                "claude-sonnet-4-5": {"input": 3.0, "output": 15.0, "cache_read": 0.30, "cache_create": 3.75},
-                "claude-haiku-4-5": {"input": 1.0, "output": 5.0, "cache_read": 0.10, "cache_create": 1.25},
+                "claude-fable-5-1": {"input": 10.0, "output": 50.0, "cache_read": 1.0, "cache_create": 12.5},
+                "claude-opus-5-5": {"input": 4.0, "output": 20.0, "cache_read": 0.4, "cache_create": 5.0},
+                "claude-opus-5": {"input": 5.0, "output": 25.0, "cache_read": 0.5, "cache_create": 6.25},
+                "claude-opus-4-8": {"input": 5.0, "output": 25.0, "cache_read": 0.5, "cache_create": 6.25},
+                "claude-opus-4-7": {"input": 5.0, "output": 25.0, "cache_read": 0.5, "cache_create": 6.25},
+                "claude-opus-4-6": {"input": 5.0, "output": 25.0, "cache_read": 0.5, "cache_create": 6.25},
+                "claude-opus-4-5": {"input": 5.0, "output": 25.0, "cache_read": 0.5, "cache_create": 6.25},
+                "claude-sonnet-5-5": {"input": 2.0, "output": 10.0, "cache_read": 0.2, "cache_create": 2.5},
+                "claude-sonnet-5": {"input": 2.0, "output": 10.0, "cache_read": 0.2, "cache_create": 2.5},
+                "claude-sonnet-4-6": {"input": 3.0, "output": 15.0, "cache_read": 0.3, "cache_create": 3.75},
+                "claude-sonnet-4-5": {"input": 3.0, "output": 15.0, "cache_read": 0.3, "cache_create": 3.75},
+                "claude-haiku-5-5": {"input": 0.1, "output": 0.5, "cache_read": 0.01, "cache_create": 0.125},
+                "claude-haiku-4-5": {"input": 1.0, "output": 5.0, "cache_read": 0.1, "cache_create": 1.25},
             }
 
     if agent_id in _STATIC_PRICING:

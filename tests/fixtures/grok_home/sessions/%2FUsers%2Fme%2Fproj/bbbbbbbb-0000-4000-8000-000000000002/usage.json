@@ -1,0 +1,26 @@
+{
+ "sessionId": "bbbbbbbb-0000-4000-8000-000000000002",
+ "updatedAt": "2026-10-21T12:00:00Z",
+ "session": {
+  "primaryModelId": "grok-build",
+  "inputTokens": 99999999,
+  "outputTokens": 99999999,
+  "costUsdTicks": 999999999999
+ },
+ "turns": [
+  {
+   "turnNumber": 1,
+   "endedAt": "2026-10-21T12:00:00Z",
+   "modelUsage": {
+    "grok-build": {
+     "inputTokens": 1000000,
+     "outputTokens": 500000,
+     "cachedReadTokens": 0,
+     "reasoningTokens": 0,
+     "totalTokens": 1500000,
+     "modelCalls": 1
+    }
+   }
+  }
+ ]
+}
