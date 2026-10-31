@@ -1,16 +1,23 @@
 # burnctl
 
-Local AI usage and cost tracking for Claude Code, Antigravity CLI, Codex CLI, OpenRouter, and related tools.
+[![CI](https://github.com/matttennie/burnctl/actions/workflows/ci.yml/badge.svg)](https://github.com/matttennie/burnctl/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-3776AB.svg)](pyproject.toml)
 
-Reads local session data plus provider APIs you already use, then shows tokens, costs, billing-period totals, model breakdowns, and ROI in one terminal view. No extra telemetry, no separate hosted service.
+Local AI usage and cost tracking for Claude Code, Antigravity CLI, Codex CLI, Grok Build, OpenRouter, and related tools.
 
-## Agents
+## What it does
+
+Reads local session data plus provider APIs you already use, then shows tokens, costs, billing-period totals, model breakdowns, and ROI in one terminal view. No extra telemetry, no separate hosted service. Zero required deps. Optional: `claude-usage`.
+
+## Supported agents
 
 | Agent | Source |
 |-------|--------|
 | Claude Code | `~/.claude/stats-cache.json` |
 | Antigravity CLI | `~/.gemini/` sessions |
 | Codex CLI | `~/.codex/sessions/*.jsonl` |
+| Grok Build | `~/.grok/sessions/*/*/usage.json` (honors `GROK_HOME`); cost from the server-reported ledger when present, else xAI list prices |
 | OpenRouter | OpenRouter activity API + local request ledger |
 | HuggingFace | HF billing API (`HF_TOKEN` with billing read permission) + local router proxy ledger for model names |
 | ElevenLabs | Subscription API (`ELEVENLABS_API_KEY`) — character quota |
@@ -24,7 +31,9 @@ counters and are hidden while usage is zero.
 
 ## Install
 
-```
+Requires Python 3.10 or later.
+
+```bash
 pip install git+https://github.com/matttennie/burnctl.git
 ```
 
@@ -42,11 +51,12 @@ Manual page:
 man burnctl
 ```
 
-## Usage
+## Use
 
 ```
 burnctl                     # all agents, current period
 burnctl --claude --antigravity  # just those two
+burnctl --grok              # just Grok Build
 burnctl -p max5x -b 15     # Claude Max 5×, billing day 15
 burnctl -P last             # previous billing period
 ```
@@ -67,10 +77,11 @@ burnctl -L            # live auto-refreshing dashboard (top mode)
 
 ### OpenRouter proxy
 
-Routes OpenRouter-aware traffic through a local proxy for live request-level tracking. Does not touch Claude, Antigravity, or Codex subscription flows. Nothing is installed automatically: setup writes an env file, appends a block to your shell rc file, and installs a LaunchAgent only after you confirm.
+Routes OpenRouter-aware traffic through a local proxy for live request-level tracking. Does not touch Claude, Antigravity, or Codex subscription flows. Nothing is installed automatically. `burnctl setup openrouter` prints what it will change (env file, a block in your shell rc file, a LaunchAgent) and asks `Proceed? [y/N]`; `--yes` skips the prompt and `--uninstall` reverses it.
 
 ```
-burnctl setup openrouter            # shows what it will change, asks to confirm (-y skips)
+burnctl setup openrouter            # prints changes, asks Proceed? [y/N]
+burnctl setup openrouter --yes      # skip the prompt
 burnctl setup openrouter --uninstall  # remove shell hook, LaunchAgent, env file
 burnctl setup openrouter --status   # health check
 burnctl proxy openrouter            # run the proxy directly
@@ -115,9 +126,9 @@ burnctl upgrade claude    # opens billing page
 burnctl upgrade --all     # all of them
 ```
 
-## Internals
+## Architecture
 
-Collector pattern. Each agent implements `BaseCollector`. `discover_collectors()` auto-detects supported provider rows from the burnctl usage log.
+Collector pattern. Each agent implements `BaseCollector`; `ALL_COLLECTORS` registers them, and provider lists (flags, config ids, upgrade pages) are derived from the collectors. `discover_collectors()` also auto-detects provider rows from the burnctl usage log.
 
 ```
 burnctl/
@@ -133,13 +144,25 @@ burnctl/
     ├── claude.py
     ├── antigravity.py
     ├── codex.py
+    ├── grok.py
     ├── api_usage.py      # OpenRouter, HuggingFace, etc.
-    └── local.py          # local-model detection stub
+    └── local.py          # local-model detection
 ```
 
-## Requirements
+Adding a provider:
 
-Python 3.10+. Zero required deps. Optional: `claude-usage`.
+1. Add a collector module under `burnctl/collectors/`.
+2. Register it in `ALL_COLLECTORS` in `collectors/__init__.py`.
+3. Set the class attributes `plan_prices`, `top_report`, and `model_prefixes`.
+4. Optionally add a `_STATIC_PRICING` entry in `pricing.py`.
+
+## Compliance
+
+This tool was designed to comply with each provider's Terms of Service. However, users should review ToS themselves and use at their own discretion.
+
+## Contributing
+
+Contributions welcome. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 

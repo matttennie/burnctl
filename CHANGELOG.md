@@ -7,8 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-10-30
+
+Grok Build support, a single-module collector interface, and no more silent shell edits. This release has breaking changes; read **Upgrading from 0.3.x** first.
+
+### Upgrading from 0.3.x
+
+- **Python 3.10 or later** is required.
+- **API-provider periods**: pay-as-you-go API providers now report a rolling last-30-days window, so their numbers differ from the 0.3.x billing-day periods.
+- **`burnctl setup openrouter`** no longer runs automatically and now asks before editing shell files. Run it once with `--yes` to restore the old wiring; `--uninstall` removes it.
+- **OpenCode**: the `--opencode` flag and the `opencode` scoped-config id are removed.
+- **File modes**: OpenRouter ledger and config files are now created `0600`. Existing files are left as-is; `chmod 600` them if you want.
+
 ### Added
 
+- Grok Build collector (`--grok`): reads `~/.grok/sessions/*/*/usage.json`,
+  honors `GROK_HOME`, uses server-reported cost when present and xAI list
+  prices otherwise, and never double counts forked or subagent sessions
+- xAI pricing table
+- `burnctl setup openrouter --yes` and `--uninstall`
+- Collector class attributes `plan_prices`, `top_report`, and
+  `model_prefixes`, so a provider is a single module
 - HuggingFace collector backed by the account billing API
   (`/api/settings/billing/usage-v2`); reads `HF_TOKEN` /
   `HUGGINGFACE_API_KEY` (billing read permission required) and falls back
@@ -38,10 +57,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   windows, and providers with no data are omitted instead of rendering a
   misleading $0.00 row
 
+### Changed
+
+- Python 3.10 floor
+- Provider lists (flags, config ids, upgrade pages) are derived from the
+  collectors
+- Claude fallback pricing refreshed to the current Claude 5.x models
+- Static pricing tables carry a verified-date comment
+
 ### Removed
 
+- OpenCode stub collector
 - The "(inactive)" header tag; the inactive flag remains available in
   JSON output for tooling but is never rendered
+
+### Security
+
+- `burnctl setup openrouter` is no longer installed automatically
+- Config, env file, and ledgers are written `0600` in `0700` directories
+- The ledger stores only usage metadata (model, ids, token counts, cost,
+  timestamps), never prompt or completion text
 
 ### Fixed
 

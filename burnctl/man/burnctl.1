@@ -1,4 +1,4 @@
-.TH BURNCTL 1 "April 2026" "burnctl 0.3.2" "User Commands"
+.TH BURNCTL 1 "2026-10-30" "burnctl 0.4.0" "User Commands"
 .SH NAME
 burnctl \- unified AI coding agent usage dashboard
 .SH SYNOPSIS
@@ -11,13 +11,13 @@ burnctl \- unified AI coding agent usage dashboard
 .B burnctl
 reads local session data and supported provider APIs to report usage, costs,
 model breakdowns, and billing-period summaries for AI coding tools such as
-Claude Code, Antigravity CLI, Codex CLI, and OpenRouter.
+Claude Code, Antigravity CLI, Codex CLI, Grok Build, and OpenRouter.
 .SH TOP-LEVEL OPTIONS
 .TP
 .B \-v, \-\-version
 Show the installed burnctl version.
 .TP
-.B \-\-claude, \-\-antigravity, \-\-codex, \-\-openrouter, \-\-huggingface, \-\-elevenlabs, \-\-tavily, \-\-local, \-\-opencode
+.B \-\-claude, \-\-antigravity, \-\-codex, \-\-grok, \-\-openrouter, \-\-huggingface, \-\-elevenlabs, \-\-tavily, \-\-local
 Limit the report to the named agent. Providers discovered from the burnctl
 usage log (Anthropic, OpenAI, Inworld, Groq, Mistral, Brave, Mercury,
 Jina) get matching flags when present.
@@ -129,7 +129,21 @@ Example:
 .RE
 .TP
 .B burnctl setup openrouter
-Install or inspect one-time OpenRouter live-tracking integration.
+Set up OpenRouter live tracking. Prints what it will change (env file, shell
+rc block, LaunchAgent) and asks
+.BR "Proceed? [y/N]" ;
+nothing is installed automatically.
+.RS
+.TP
+.B \-\-yes
+Skip the confirmation prompt.
+.TP
+.B \-\-uninstall
+Remove the shell hook, LaunchAgent, and env file.
+.TP
+.B \-\-status
+Show a health check.
+.RE
 .TP
 .B burnctl proxy openrouter
 Run the local OpenRouter tracking proxy (port 8765).
