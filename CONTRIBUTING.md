@@ -20,6 +20,15 @@ mypy burnctl/
 
 CI runs these on Python 3.10-3.13 across Linux, macOS, and Windows, plus a build and `twine check`.
 
+To try a branch end to end against your own data without touching your global install:
+
+```bash
+python3 -m venv /tmp/burnctl-test && source /tmp/burnctl-test/bin/activate
+pip install . && hash -r   # hash -r: zsh caches the path of a previously installed burnctl
+burnctl --version && burnctl
+deactivate && rm -rf /tmp/burnctl-test
+```
+
 ## Submitting changes
 
 1. Create a branch from `main`.

@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.4.0] - 2026-10-30
+## [0.4.0] - 2026-10-31
 
 Grok Build support, a single-module collector interface, and no more silent shell edits. This release has breaking changes; read **Upgrading from 0.3.x** first.
 
