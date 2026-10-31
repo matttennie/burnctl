@@ -172,7 +172,8 @@ class TestSetupCommand:
         assert setup.RC_BEGIN in rc.read_text(encoding="utf-8")
         assert os.path.isfile(setup.ENV_FILE)
         assert os.path.isfile(setup.LAUNCH_AGENT_FILE)
-        assert os.stat(setup.ENV_FILE).st_mode & 0o777 == 0o600
+        if os.name != "nt":  # Windows has no POSIX mode bits
+            assert os.stat(setup.ENV_FILE).st_mode & 0o777 == 0o600
 
         cli._handle_setup(self._args(uninstall=True))
         assert rc.read_text(encoding="utf-8").startswith(original)
