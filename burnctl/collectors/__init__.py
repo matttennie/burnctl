@@ -5,7 +5,6 @@ from burnctl.collectors.antigravity import AntigravityCollector
 from burnctl.collectors.codex import CodexCollector
 from burnctl.collectors.local import LocalCollector
 from burnctl.collectors.api_usage import discover_collectors
-from burnctl.collectors.stubs import OpenCodeCollector
 
 ALL_COLLECTORS = [
     ClaudeCollector(),
@@ -13,7 +12,6 @@ ALL_COLLECTORS = [
     CodexCollector(),
     *discover_collectors(),
     LocalCollector(),
-    OpenCodeCollector(),
 ]
 
 

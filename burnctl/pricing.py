@@ -63,7 +63,11 @@ _PRICING_HISTORY_DIR = os.path.join(
     os.path.expanduser("~"), ".local", "share", "burnctl",
 )
 _PRICING_HISTORY_FILE = os.path.join(_PRICING_HISTORY_DIR, "pricing-history.json")
-_HISTORY_TRACKED_AGENTS = {"antigravity", "codex"}
+# Static per-agent tables; every entry here gets history snapshots.
+_STATIC_PRICING = {"antigravity": ANTIGRAVITY_PRICING, "codex": OPENAI_PRICING}
+_HISTORY_TRACKED_AGENTS = set(_STATIC_PRICING)
+# Extra prefixes tried when a model id misses the table.
+_MODEL_ALIAS_PREFIXES = {"antigravity": ("gemini-", "gemini ")}
 
 
 def _snapshot_now_iso():
@@ -205,16 +209,14 @@ def get_model_pricing_for_time(agent_id, model_id, when=None):
     if model_key in pricing_table:
         return pricing_table[model_key]
     stripped = model_key
-    if agent_id in ("claude", "codex", "antigravity"):
+    if agent_id == "claude" or agent_id in _STATIC_PRICING:
         import re
         stripped = re.sub(r"-(\d{8}|latest)$", "", stripped)
     if stripped in pricing_table:
         return pricing_table[stripped]
-    if agent_id == "antigravity":
-        if not stripped.startswith("gemini-") and f"gemini-{stripped}" in pricing_table:
-            return pricing_table[f"gemini-{stripped}"]
-        if not stripped.startswith("gemini ") and f"gemini {stripped}" in pricing_table:
-            return pricing_table[f"gemini {stripped}"]
+    for prefix in _MODEL_ALIAS_PREFIXES.get(agent_id, ()):
+        if not stripped.startswith(prefix) and prefix + stripped in pricing_table:
+            return pricing_table[prefix + stripped]
     return {}
 
 
@@ -324,13 +326,8 @@ def get_agent_pricing(agent_id):
                 "claude-haiku-4-5": {"input": 1.0, "output": 5.0, "cache_read": 0.10, "cache_create": 1.25},
             }
 
-    if agent_id == "antigravity":
-        result = dict(ANTIGRAVITY_PRICING)
-        _record_pricing_snapshot(agent_id, result)
-        return result
-
-    if agent_id == "codex":
-        result = dict(OPENAI_PRICING)
+    if agent_id in _STATIC_PRICING:
+        result = dict(_STATIC_PRICING[agent_id])
         _record_pricing_snapshot(agent_id, result)
         return result
 

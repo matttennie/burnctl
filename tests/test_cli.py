@@ -77,7 +77,6 @@ class TestBuildParser:
             "--antigravity",
             "--codex",
             "--local",
-            "--opencode",
             "--all",
         ],
     )
@@ -645,7 +644,6 @@ class TestHandleConfig:
             codex=False,
             openrouter=False,
             local=False,
-            opencode=False,
         )
         with patch("burnctl.config.show") as mock_show:
             _handle_config(args)
@@ -661,7 +659,6 @@ class TestHandleConfig:
             codex=False,
             openrouter=False,
             local=False,
-            opencode=False,
         )
         fake_cfg = {"billing_day": 15, "claude_plan": "pro"}
         with patch("burnctl.config.load", return_value=fake_cfg):
@@ -679,7 +676,6 @@ class TestHandleConfig:
             codex=False,
             openrouter=False,
             local=False,
-            opencode=False,
         )
         fake_cfg = {"billing_day": 15}
         with patch("burnctl.config.load", return_value=fake_cfg):
@@ -697,7 +693,6 @@ class TestHandleConfig:
             codex=False,
             openrouter=False,
             local=False,
-            opencode=False,
         )
         fake_cfg = {"billing_day": 15}
         with patch("burnctl.config.load", return_value=fake_cfg):
@@ -717,7 +712,6 @@ class TestHandleConfig:
             codex=False,
             openrouter=False,
             local=False,
-            opencode=False,
         )
         with patch("burnctl.config.set_values") as mock_set:
             _handle_config(args)
@@ -733,7 +727,6 @@ class TestHandleConfig:
             codex=True,
             openrouter=False,
             local=False,
-            opencode=False,
         )
         with patch("burnctl.config.set_scoped_values") as mock_set:
             _handle_config(args)
@@ -908,7 +901,7 @@ class TestHandleSetup:
     def test_install(self, capsys):
         from burnctl.cli import _handle_setup
 
-        args = argparse.Namespace(provider="openrouter", status=False)
+        args = argparse.Namespace(provider="openrouter", status=False, yes=True, uninstall=False)
         with patch("burnctl.openrouter_setup.install") as mock_install:
             _handle_setup(args)
         mock_install.assert_called_once()

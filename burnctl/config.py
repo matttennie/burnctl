@@ -111,30 +111,14 @@ _VALIDATORS = {
     ),
 }
 
-_SCOPED_AGENTS = (
-    "claude", "antigravity", "codex", "openrouter",
-    "huggingface", "elevenlabs", "tavily", "inworld",
-    "groq", "mistral", "brave", "mercury", "jina",
-    "anthropic", "openai",
-    "local", "opencode",
-)
-
 _SCOPED_KEYS = ("billing_plan", "billing_day")
 
-_SCOPED_PLAN_VALIDATORS = {
-    "claude": (
-        lambda v: v in PLAN_PRICES,
-        f"must be one of: {', '.join(PLAN_PRICES.keys())}",
-    ),
-    "antigravity": (
-        lambda v: v in ANTIGRAVITY_PLAN_PRICES,
-        f"must be one of: {', '.join(ANTIGRAVITY_PLAN_PRICES.keys())}",
-    ),
-    "codex": (
-        lambda v: v in CODEX_PLAN_PRICES,
-        f"must be one of: {', '.join(CODEX_PLAN_PRICES.keys())}",
-    ),
-}
+
+def _scoped_agents():
+    """Ids of every registered collector plus usage-log providers."""
+    from burnctl.collectors import ALL_COLLECTORS
+    from burnctl.collectors.api_usage import _PROVIDER_META
+    return {c.id for c in ALL_COLLECTORS} | set(_PROVIDER_META)
 
 
 def effective_price(plan, interval):
@@ -320,17 +304,21 @@ def set_values(pairs):
 
 
 def _validate_scoped_plan(agent, value):
-    validator, err_msg = _SCOPED_PLAN_VALIDATORS.get(
-        agent, (lambda v: isinstance(v, str) and len(v) > 0, "must be a non-empty string")
-    )
-    if not validator(value):
+    from burnctl.collectors import get_collector
+    collector = get_collector(agent)
+    prices = getattr(collector, "plan_prices", None)
+    if prices is None:
+        ok, err_msg = isinstance(value, str) and len(value) > 0, "must be a non-empty string"
+    else:
+        ok, err_msg = value in prices, f"must be one of: {', '.join(prices)}"
+    if not ok:
         print(f"Error: {agent} billing_plan {err_msg}.", file=sys.stderr)
         sys.exit(1)
 
 
 def set_scoped_values(agent, pairs):
     """Set one or more agent-scoped config key/value pairs."""
-    if agent not in _SCOPED_AGENTS:
+    if agent not in _scoped_agents():
         print(f"Error: unknown agent '{agent}'", file=sys.stderr)
         sys.exit(1)
 
@@ -368,7 +356,7 @@ def set_scoped_values(agent, pairs):
 
 def get_scoped_value(agent, key):
     """Read one agent-scoped config value."""
-    if agent not in _SCOPED_AGENTS:
+    if agent not in _scoped_agents():
         print(f"Error: unknown agent '{agent}'", file=sys.stderr)
         sys.exit(1)
     if key not in _SCOPED_KEYS:

@@ -13,7 +13,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
-        python-version: ["3.8", "3.9", "3.10", "3.11", "3.12", "3.13"]
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
 
     steps:
       - uses: actions/checkout@v4
@@ -58,10 +58,7 @@ jobs:
           python-version: "3.12"
 
       - name: Install lint tools
-        run: pip install vermin mypy
-
-      - name: Check minimum Python version
-        run: vermin --target=3.8- --backport argparse burnctl/ tests/
+        run: pip install mypy
 
       - name: Type check with mypy
         run: mypy burnctl/

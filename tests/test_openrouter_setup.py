@@ -102,29 +102,83 @@ class TestOpenRouterSetup:
         assert changed is False
         assert message == ""
 
-    def test_maybe_auto_setup_skips_unknown_shell(self, monkeypatch):
+    def test_maybe_auto_setup_hints_once_and_never_installs(self, monkeypatch, tmp_path):
         monkeypatch.setattr(setup.sys, "platform", "darwin")
         monkeypatch.setattr(setup, "_has_openrouter_key", lambda: True)
         monkeypatch.setattr(setup, "is_setup_complete", lambda: False)
         monkeypatch.setattr(setup, "_is_interactive_tty", lambda: True)
-        monkeypatch.setattr(setup, "_shell_rc_path", lambda: "")
+        monkeypatch.setattr(setup, "CONFIG_DIR", str(tmp_path))
+        monkeypatch.setattr(setup, "HINT_MARKER", str(tmp_path / ".hint"))
+
+        def _boom():
+            raise AssertionError("install must not run")
+
+        monkeypatch.setattr(setup, "install", _boom)
         changed, message = setup.maybe_auto_setup()
         assert changed is False
-        assert "Could not detect shell" in message
+        assert "burnctl setup openrouter" in message
+        assert setup.maybe_auto_setup() == (False, "")
 
-    def test_maybe_auto_setup_runs_when_needed(self, monkeypatch):
-        monkeypatch.setattr(setup.sys, "platform", "darwin")
-        monkeypatch.setattr(setup, "_has_openrouter_key", lambda: True)
-        monkeypatch.setattr(setup, "is_setup_complete", lambda: False)
-        monkeypatch.setattr(setup, "_is_interactive_tty", lambda: True)
-        monkeypatch.setattr(setup, "_shell_rc_path", lambda: "/tmp/fake_rc")
-        called = {"value": False}
 
-        def _install():
-            called["value"] = True
+def _isolate(monkeypatch, tmp_path, shell="zsh"):
+    """Point every path setup touches into tmp_path; stub launchctl."""
+    rc = tmp_path / ".zshrc"
+    monkeypatch.setattr(setup, "CONFIG_DIR", str(tmp_path / "cfg"))
+    monkeypatch.setattr(setup, "ENV_FILE", str(tmp_path / "cfg" / "env"))
+    monkeypatch.setattr(setup, "LAUNCH_AGENT_FILE", str(tmp_path / "la" / "x.plist"))
+    monkeypatch.setattr(setup, "_shell_rc_path", lambda: str(rc))
+    monkeypatch.setattr(setup, "_detect_shell", lambda: shell)
+    monkeypatch.setattr(setup.subprocess, "run", lambda *a, **k: None)
+    return rc
 
-        monkeypatch.setattr(setup, "install", _install)
-        changed, message = setup.maybe_auto_setup()
-        assert changed is True
-        assert called["value"] is True
-        assert "Configured burnctl OpenRouter live tracking." in message
+
+class TestSetupCommand:
+    def _args(self, **kw):
+        import argparse
+        ns = dict(provider="openrouter", status=False, yes=False, uninstall=False)
+        ns.update(kw)
+        return argparse.Namespace(**ns)
+
+    def test_decline_writes_nothing(self, monkeypatch, tmp_path):
+        from burnctl import cli
+        rc = _isolate(monkeypatch, tmp_path)
+        monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: True)
+        monkeypatch.setattr("builtins.input", lambda prompt="": "n")
+        try:
+            cli._handle_setup(self._args())
+        except SystemExit:
+            pass
+        assert not rc.exists()
+        assert not (tmp_path / "cfg").exists()
+        assert not (tmp_path / "la").exists()
+
+    def test_non_tty_without_yes_aborts(self, monkeypatch, tmp_path):
+        import pytest
+        from burnctl import cli
+        rc = _isolate(monkeypatch, tmp_path)
+        monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: False)
+        with pytest.raises(SystemExit):
+            cli._handle_setup(self._args())
+        assert not rc.exists()
+
+    def test_yes_installs_then_uninstall_restores_rc(self, monkeypatch, tmp_path):
+        import os
+        from burnctl import cli
+        rc = _isolate(monkeypatch, tmp_path)
+        original = "export FOO=1\n# my stuff"  # no trailing newline
+        rc.write_text(original, encoding="utf-8")
+
+        cli._handle_setup(self._args(yes=True))
+        assert setup.RC_BEGIN in rc.read_text(encoding="utf-8")
+        assert os.path.isfile(setup.ENV_FILE)
+        assert os.path.isfile(setup.LAUNCH_AGENT_FILE)
+        assert os.stat(setup.ENV_FILE).st_mode & 0o777 == 0o600
+
+        cli._handle_setup(self._args(uninstall=True))
+        assert rc.read_text(encoding="utf-8").startswith(original)
+        assert setup.RC_BEGIN not in rc.read_text(encoding="utf-8")
+        assert not os.path.exists(setup.ENV_FILE)
+        assert not os.path.exists(setup.LAUNCH_AGENT_FILE)
+
+        # idempotent
+        assert setup.uninstall() == []

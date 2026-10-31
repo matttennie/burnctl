@@ -48,6 +48,10 @@ def _cost_for_model(model, usage, pricing_table):
 class ClaudeCollector(BaseCollector):
     """Collector for Claude Code usage data."""
 
+    plan_prices = PLAN_PRICES
+    top_report = True
+    model_prefixes = ("claude-",)
+
     @property
     def name(self):
         return "Claude Code"

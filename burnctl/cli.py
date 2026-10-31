@@ -196,6 +196,14 @@ def _build_parser():
         help="Integration to set up",
     )
     setup.add_argument(
+        "--yes", "-y", action="store_true",
+        help="Skip the confirmation prompt",
+    )
+    setup.add_argument(
+        "--uninstall", action="store_true",
+        help="Remove the shell hook, LaunchAgent and env file",
+    )
+    setup.add_argument(
         "--status",
         action="store_true",
         help="Show current setup status",
@@ -537,11 +545,29 @@ def _handle_setup(args):
     if args.provider != "openrouter":
         print("Only OpenRouter setup is supported right now.", file=sys.stderr)
         sys.exit(1)
-    from burnctl.openrouter_setup import install
+    from burnctl.openrouter_setup import describe_install, install, uninstall
 
     if args.status:
         _proxy_doctor(PROXY_HOST, PROXY_PORT, None)
         return
+
+    if args.uninstall:
+        removed = uninstall()
+        for item in removed:
+            print("Removed: %s" % item)
+        if not removed:
+            print("Nothing to remove.")
+        return
+
+    for line in describe_install():
+        print(line)
+    if not args.yes:
+        if not sys.stdin.isatty():
+            print("Not a TTY; re-run with --yes to proceed.", file=sys.stderr)
+            sys.exit(1)
+        if input("Proceed? [y/N] ").strip().lower() not in ("y", "yes"):
+            print("Aborted; nothing was changed.")
+            sys.exit(1)
 
     install()
     print("Installed burnctl OpenRouter live tracking.")
@@ -674,8 +700,8 @@ def main():
     config = load_config()
     config = _merge_config(args, config)
 
-    bootstrapped, message = maybe_auto_setup()
-    if bootstrapped and message:
+    _, message = maybe_auto_setup()
+    if message:
         print(message, file=sys.stderr)
 
     collectors = _resolve_collectors(args, config)

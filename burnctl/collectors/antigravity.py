@@ -17,9 +17,12 @@ from burnctl.collectors.base import (
     _check_file_size,
     load_with_stat_cache,
 )
+from burnctl.config import ANTIGRAVITY_PLAN_PRICES
 from burnctl.pricing import get_agent_pricing, get_model_pricing_for_time
 
-_DEFAULT_CHAT_PATTERN = os.path.join(os.path.expanduser("~"), ".gemini", "antigravity-cli", "tmp", "*", "chats", "session-*.json*")
+_DEFAULT_CHAT_PATTERN = os.path.join(
+    os.path.expanduser("~"), ".gemini", "antigravity-cli", "tmp", "*", "chats", "session-*.json*",
+)
 _CHAT_PATTERN = _DEFAULT_CHAT_PATTERN
 
 _ALT_PATTERNS = [
@@ -95,6 +98,10 @@ def _load_session_cached(fpath):
 
 class AntigravityCollector(BaseCollector):
     """Collector for Antigravity CLI session data."""
+
+    plan_prices = ANTIGRAVITY_PLAN_PRICES
+    top_report = True
+    model_prefixes = ("gemini-", "antigravity-")
 
     @property
     def name(self):
@@ -253,7 +260,6 @@ class AntigravityCollector(BaseCollector):
         return "https://aistudio.google.com/app/plan_management"
 
     def get_plan_info(self, config):
-        from burnctl.config import ANTIGRAVITY_PLAN_PRICES
         plan = config.get("agent_plans", {}).get("antigravity")
         if not plan:
             plan = config.get("antigravity_plan", "free")

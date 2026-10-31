@@ -16,7 +16,6 @@ Reads local session data plus provider APIs you already use, then shows tokens, 
 | ElevenLabs | Subscription API (`ELEVENLABS_API_KEY`) — character quota |
 | Tavily | Usage API (`TAVILY_API_KEY`) — plan credits |
 | Inworld, Groq, Mistral, Brave, Mercury, Jina | `~/.config/burnctl/usage.jsonl` (no public usage APIs) |
-| OpenCode | Stub — PRs welcome |
 
 API providers (OpenRouter, HuggingFace, usage-log providers) report a
 rolling last-30-days window instead of a billing-day period. Quota
@@ -68,10 +67,11 @@ burnctl -L            # live auto-refreshing dashboard (top mode)
 
 ### OpenRouter proxy
 
-Routes OpenRouter-aware traffic through a local proxy for live request-level tracking. Does not touch Claude, Antigravity, or Codex subscription flows.
+Routes OpenRouter-aware traffic through a local proxy for live request-level tracking. Does not touch Claude, Antigravity, or Codex subscription flows. Nothing is installed automatically: setup writes an env file, appends a block to your shell rc file, and installs a LaunchAgent only after you confirm.
 
 ```
-burnctl setup openrouter            # one-time install (LaunchAgent + shell hook)
+burnctl setup openrouter            # shows what it will change, asks to confirm (-y skips)
+burnctl setup openrouter --uninstall  # remove shell hook, LaunchAgent, env file
 burnctl setup openrouter --status   # health check
 burnctl proxy openrouter            # run the proxy directly
 burnctl proxy openrouter --print-shell  # emit safe shell exports
@@ -134,13 +134,12 @@ burnctl/
     ├── antigravity.py
     ├── codex.py
     ├── api_usage.py      # OpenRouter, HuggingFace, etc.
-    ├── local.py          # local-model detection stub
-    └── stubs.py          # OpenCode
+    └── local.py          # local-model detection stub
 ```
 
 ## Requirements
 
-Python 3.8+. Zero required deps. Optional: `claude-usage`.
+Python 3.10+. Zero required deps. Optional: `claude-usage`.
 
 ## License
 

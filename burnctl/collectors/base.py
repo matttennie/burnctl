@@ -3,6 +3,7 @@
 import os
 import sys
 from abc import ABC, abstractmethod
+from typing import Mapping, Optional, Tuple
 
 # Maximum file size (bytes) we'll attempt to parse.  Protects against
 # OOM if a data file is unexpectedly huge (e.g., corruption, symlink to
@@ -64,6 +65,15 @@ class BaseCollector(ABC):
     # When True, the agent is omitted from the report when get_stats
     # returns None (quota providers with zero usage this cycle).
     hide_when_empty = False
+
+    # Plan name -> monthly USD.  None accepts any non-empty plan name.
+    plan_prices: Optional[Mapping[str, float]] = None
+
+    # Show this agent in the top-level report grid.
+    top_report = False
+
+    # Prefixes stripped from model names for display.
+    model_prefixes: Tuple[str, ...] = ()
 
     # Collectors may also define ``get_period(ref_date) -> (start, end)``
     # to supply provider-reported cycle bounds for the current period.

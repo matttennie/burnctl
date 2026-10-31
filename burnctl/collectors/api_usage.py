@@ -7,7 +7,7 @@ discovered from burnctl's provider usage log when present.
 import json
 import os
 import sys
-from typing import Dict, List
+from typing import Any, Dict, List
 import urllib.error
 import urllib.request
 from datetime import datetime
@@ -37,18 +37,21 @@ _HF_KEY_ENV_VARS = (
 _MAX_FILE_BYTES = 100 * 1024 * 1024
 
 # Provider display names and upgrade URLs.
-_PROVIDER_META = {
+_PROVIDER_META: Dict[str, Dict[str, Any]] = {
     "huggingface": {
         "name": "HuggingFace",
         "upgrade_url": "https://huggingface.co/pricing",
+        "top_report": True,
     },
     "anthropic": {
         "name": "Anthropic",
         "upgrade_url": "https://console.anthropic.com/settings/billing",
+        "top_report": True,
     },
     "openai": {
         "name": "OpenAI",
         "upgrade_url": "https://platform.openai.com/usage",
+        "top_report": True,
     },
     # Inworld exposes no public usage API (verified 2026-06); usage rows
     # logged to the burnctl usage file are the supported source.
@@ -390,6 +393,7 @@ class OpenRouterCollector(BaseCollector):
     """Collector backed by the OpenRouter account API."""
 
     rolling_window_days = 30
+    top_report = True
 
     @property
     def name(self):
@@ -569,6 +573,7 @@ class ApiUsageCollector(BaseCollector):
         self._provider_name = provider_name
         self._usage_file = usage_file
         self._upgrade_url = upgrade_url
+        self.top_report = bool(_PROVIDER_META.get(provider_id, {}).get("top_report"))
 
     @property
     def _file(self):

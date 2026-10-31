@@ -602,17 +602,6 @@ def _strip_ansi(text):
     return _ANSI_RE.sub("", text)
 
 
-_TOP_REPORT_AGENT_IDS = {
-    "claude",
-    "antigravity",
-    "codex",
-    "openrouter",
-    "huggingface",
-    "anthropic",
-    "openai",
-}
-
-
 def _visible_report_agents(agents):
     """Return the agents shown in the top-level report grid.
 
@@ -621,9 +610,9 @@ def _visible_report_agents(agents):
     back to showing everything so ad hoc tests and unknown collectors
     still render sensibly.
     """
-    preferred = [
-        a for a in agents if a.get("id", "") in _TOP_REPORT_AGENT_IDS
-    ]
+    from burnctl.collectors import ALL_COLLECTORS
+    top_ids = {c.id for c in ALL_COLLECTORS if c.top_report}
+    preferred = [a for a in agents if a.get("id", "") in top_ids]
     return preferred or list(agents)
 
 
@@ -1008,12 +997,14 @@ def render_full(stats, simple=False, use_color=True, theme="gradient"):
             cost_mode = total_tokens == 0 and total_cost > 0
 
             # Pre-pass: shorten all model names and find the longest
+            from burnctl.collectors import ALL_COLLECTORS
+            prefixes = [p for c in ALL_COLLECTORS for p in c.model_prefixes]
             shortened = {}
             for model in model_usage:
                 short = model
                 if "/" in short:
                     short = short.split("/")[-1]
-                for prefix in ("claude-", "gemini-", "codex-", "antigravity-"):
+                for prefix in prefixes:
                     short = short.replace(prefix, "")
                 short = re.sub(r"-(\d{8}|latest)$", "", short)
                 shortened[model] = short

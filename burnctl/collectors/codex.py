@@ -13,6 +13,7 @@ from burnctl.collectors.base import (
     _check_file_size,
     load_with_stat_cache,
 )
+from burnctl.config import CODEX_PLAN_PRICES
 from burnctl.pricing import get_agent_pricing, get_model_pricing_for_time
 
 # Default locations for Codex CLI data
@@ -222,6 +223,10 @@ def _compute_session_cost(token_usage, model_pricing):
 
 class CodexCollector(BaseCollector):
     """Collector for OpenAI Codex CLI usage data."""
+
+    plan_prices = CODEX_PLAN_PRICES
+    top_report = True
+    model_prefixes = ("codex-",)
 
     @property
     def name(self):
@@ -498,8 +503,6 @@ class CodexCollector(BaseCollector):
         return "https://platform.openai.com/usage"
 
     def get_plan_info(self, config):
-        from burnctl.config import CODEX_PLAN_PRICES
-
         plan = config.get("agent_plans", {}).get("codex")
         if not plan:
             plan = config.get("codex_plan") or "free"

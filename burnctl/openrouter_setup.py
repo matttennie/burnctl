@@ -94,28 +94,82 @@ def is_setup_complete():
     )
 
 
+HINT_MARKER = os.path.join(CONFIG_DIR, ".openrouter-hint-shown")
+HINT = "OpenRouter key detected. Run `burnctl setup openrouter` for live request tracking."
+
+
 def maybe_auto_setup():
-    """Install the OpenRouter proxy workflow when it is safe and relevant."""
-    if sys.platform != "darwin":
+    """Print a one-time hint; never installs anything."""
+    if sys.platform != "darwin" or not _has_openrouter_key():
         return False, ""
-    if not _has_openrouter_key():
+    if is_setup_complete() or not _is_interactive_tty() or os.path.exists(HINT_MARKER):
         return False, ""
-    if is_setup_complete():
-        return False, ""
-    if not _is_interactive_tty():
-        return False, ""
+    try:
+        os.makedirs(CONFIG_DIR, mode=0o700, exist_ok=True)
+        with open(HINT_MARKER, "w", encoding="utf-8"):
+            pass
+    except OSError:
+        pass
+    return False, HINT
+
+
+def describe_install():
+    """Return the lines describing exactly what install() will touch."""
     rc_path = _shell_rc_path()
-    if not rc_path:
-        return False, (
-            "Could not detect shell (SHELL=%s). "
-            "Run `burnctl setup openrouter` manually." % os.environ.get("SHELL", "")
+    return [
+        "burnctl will make the following changes:",
+        "  - write env file:        %s" % ENV_FILE,
+        "  - append a block to:     %s" % (rc_path or "(no supported shell detected; skipped)"),
+        "  - write LaunchAgent:     %s" % LAUNCH_AGENT_FILE,
+        "  - run launchctl to (re)load the LaunchAgent",
+    ]
+
+
+def uninstall():
+    """Reverse install(). Idempotent. Returns a list of what was removed."""
+    removed = []
+    rc_path = _shell_rc_path()
+    if rc_path and _remove_shell_hook(rc_path):
+        removed.append("shell hook block in %s" % rc_path)
+    if os.path.isfile(LAUNCH_AGENT_FILE):
+        _unload_launch_agent(LAUNCH_AGENT_FILE)
+        os.remove(LAUNCH_AGENT_FILE)
+        removed.append(LAUNCH_AGENT_FILE)
+    if os.path.isfile(ENV_FILE):
+        os.remove(ENV_FILE)
+        removed.append(ENV_FILE)
+    return removed
+
+
+def _remove_shell_hook(path):
+    try:
+        with open(path, encoding="utf-8", newline="") as fh:
+            text = fh.read()
+    except OSError:
+        return False
+    start = text.find(RC_BEGIN)
+    end = text.find(RC_END, start + 1) if start >= 0 else -1
+    if start < 0 or end < 0:
+        return False
+    end += len(RC_END)
+    if text.startswith("\n", end):
+        end += 1
+    # install() writes "\n" + block; drop that leading blank line too.
+    if start > 0 and text[start - 1] == "\n":
+        start -= 1
+    with open(path, "w", encoding="utf-8", newline="") as fh:
+        fh.write(text[:start] + text[end:])
+    return True
+
+
+def _unload_launch_agent(path):
+    try:
+        subprocess.run(
+            ["launchctl", "unload", path],
+            check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         )
-    install()
-    return True, (
-        "Configured burnctl OpenRouter live tracking. "
-        "New shells will route OpenRouter-aware clients through the local proxy "
-        "without touching OPENAI_BASE_URL."
-    )
+    except OSError:
+        pass
 
 
 def install():
@@ -172,8 +226,10 @@ def _shell_rc_has_hook(path):
 
 def _write_env_file(path):
     content = print_setup_shell() + "\n"
-    with open(path, "w", encoding="utf-8") as fh:
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
         fh.write(content)
+    os.chmod(path, 0o600)
 
 
 def _ensure_shell_hook(path, shell=""):

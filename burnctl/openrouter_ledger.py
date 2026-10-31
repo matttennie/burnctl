@@ -92,10 +92,11 @@ def load_entries(filepath=None):
 
 def append_entry(entry, filepath=None):
     filepath = filepath or LEDGER_FILE
-    os.makedirs(os.path.dirname(filepath), exist_ok=True)
+    os.makedirs(os.path.dirname(filepath), mode=0o700, exist_ok=True)
     record = dict(entry)
     ts = record.get("ts")
     if isinstance(ts, datetime):
         record["ts"] = ts.isoformat()
-    with open(filepath, "a", encoding="utf-8") as fh:
+    fd = os.open(filepath, os.O_APPEND | os.O_CREAT | os.O_WRONLY, 0o600)
+    with os.fdopen(fd, "a", encoding="utf-8") as fh:
         fh.write(json.dumps(record, sort_keys=True) + "\n")
