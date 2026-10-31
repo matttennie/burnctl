@@ -56,7 +56,7 @@ def _load_session(fpath):
         return None
     try:
         if fpath.endswith(".jsonl"):
-            session = {"messages": []}
+            session: dict = {"messages": []}
             with open(fpath, encoding="utf-8", errors="replace") as f:
                 for line in f:
                     line = line.strip()
