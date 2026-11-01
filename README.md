@@ -14,6 +14,10 @@ Python runtime; this preview targets Intel macOS 26 and is not published or
 notarized. See [the desktop guide](docs/desktop.md) for setup, testing, and data
 limitations.
 
+The desktop app and CLI stay in this repository and share the same Python
+collector and reporting engine. Native app sources and packaging live under
+`macos/`; there is no separate private desktop repository or duplicate engine.
+
 ## What it does
 
 Reads local session data plus provider APIs you already use, then shows tokens, costs, billing-period totals, model breakdowns, and ROI in one terminal view. No extra telemetry, no separate hosted service. Zero required deps. Optional: `claude-usage`.

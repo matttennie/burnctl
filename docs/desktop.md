@@ -6,6 +6,23 @@ source availability, and model detail without account-management actions. No
 proxy installation, shell changes, credential editing, or background service is
 part of the desktop app. The existing CLI remains unchanged.
 
+## One repository, two interfaces
+
+The desktop app stays in the same repository as the CLI. Both use the Python
+collectors and reporting engine; the desktop does not fork that logic or require
+a separate private repository.
+
+- `burnctl/collectors/`, `burnctl/report.py`, and `burnctl/pricing.py`: shared
+  collection, aggregation, and pricing logic.
+- `burnctl/cli.py`: the existing terminal interface.
+- `burnctl/desktop.py`: the read-only, versioned JSON adapter for the app.
+- `macos/Sources/Burnctl/`: native window, SwiftUI interface, and helper client.
+- `macos/build-app.sh`: bundles the native interface and the shared Python engine
+  into a self-contained local app.
+
+Collector fixes belong in the shared engine so both interfaces benefit. Keep
+desktop interface and packaging changes alongside the CLI here.
+
 ## Open the app
 
 The built app is `dist/Burnctl.app`. Double-click it in Finder, or run:
