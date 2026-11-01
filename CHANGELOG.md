@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Claude session gap-fill counted the same assistant message once per
+  streamed JSONL line, inflating period output tokens roughly 3x. Usage
+  now counts once per message id
+
 ## [0.4.0] - 2026-10-31
 
 Grok Build support, a single-module collector interface, and no more silent shell edits. This release has breaking changes; read **Upgrading from 0.3.x** first.
