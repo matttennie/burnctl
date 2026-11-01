@@ -1,6 +1,5 @@
 """Desktop JSON contract and data-provenance tests (no live accounts)."""
 
-from copy import deepcopy
 from datetime import datetime
 import json
 from unittest.mock import patch
@@ -43,7 +42,15 @@ def stats(**overrides):
 
 
 def report(collectors, period="current"):
-    return build_report(period, collectors, deepcopy(DEFAULTS), datetime(2026, 10, 15))
+    # Other configuration tests can mutate DEFAULTS' nested dictionaries.
+    # Build this fixture independently, rather than copying shared state.
+    config = {
+        "billing_day": 1,
+        "billing_interval": "mo",
+        "agent_plans": {},
+        "agent_billing_days": {},
+    }
+    return build_report(period, collectors, config, datetime(2026, 10, 15))
 
 
 def test_current_and_previous_use_existing_billing_period_math():
@@ -57,6 +64,17 @@ def test_current_and_previous_use_existing_billing_period_math():
     row = report([collector], "previous")["agents"][0]
     assert row["period_start"] == "2026-09-01"
     assert row["period_end"] == "2026-10-01"
+
+
+def test_report_fixture_is_independent_of_mutated_global_defaults():
+    with patch.dict(DEFAULTS, {
+        "billing_day": 23,
+        "agent_billing_days": {"codex": 18},
+        "agent_plans": {"codex": "pro"},
+    }):
+        row = report([Collector(stats())])["agents"][0]
+    assert row["period_start"] == "2026-10-01"
+    assert row["plan_name"] == "pay-as-you-go"
 
 
 def test_one_failure_does_not_hide_healthy_provider_or_leak_exception():
