@@ -6,6 +6,8 @@ Each agent has its own pricing table (or delegates to an external package).
 
 import json
 import os
+from contextlib import contextmanager
+from contextvars import ContextVar
 from typing import Dict, Optional
 import time
 import urllib.error
@@ -13,6 +15,20 @@ import urllib.request
 from datetime import datetime, timezone
 
 from burnctl import __version__ as _BURNCTL_VERSION
+
+
+_HISTORY_READ_ONLY = ContextVar("pricing_history_read_only", default=False)
+
+
+@contextmanager
+def read_only_history():
+    """Read existing historical prices without recording new disk snapshots."""
+    token = _HISTORY_READ_ONLY.set(True)
+    try:
+        yield
+    finally:
+        _HISTORY_READ_ONLY.reset(token)
+
 
 # ── Antigravity (per-million-token rates, USD) ───────────────────
 # Rates last reviewed 2026-07-01 from https://ai.google.dev/gemini-api/docs/pricing
@@ -161,6 +177,8 @@ def _save_pricing_history(history):
 
 
 def _record_pricing_snapshot(agent_id, pricing_table):
+    if _HISTORY_READ_ONLY.get():
+        return
     if agent_id not in _HISTORY_TRACKED_AGENTS:
         return
     # The static tables cannot change within a process, so one check per
