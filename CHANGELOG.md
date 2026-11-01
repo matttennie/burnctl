@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Read-only native macOS desktop preview with usage summaries, provider and
+  model details, current/previous periods, and manual refresh. Missing data and
+  unsupported periods remain distinct from zero usage.
+- Desktop sources and packaging under `macos/` in this repository, reusing the
+  CLI's Python collectors and reporting engine through `burnctl/desktop.py`.
+- Self-contained local app build with a bundled Python runtime. The current
+  preview targets Intel macOS 26; it is ad-hoc signed, not published or notarized.
+
 ### Fixed
 
 - Claude session gap-fill counted the same assistant message once per

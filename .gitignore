@@ -39,3 +39,9 @@ htmlcov/
 coverage.xml
 .fwens/
 .claude/
+
+# Native macOS development
+.worktrees/
+.venv-macos/
+macos/.build/
+macos/.swiftpm/
